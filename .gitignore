@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Data (exclude all, but keep structure)
+data/raw/*
+data/processed/*
+data/guides/*
+data/chroma/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/guides/.gitkeep
+!data/chroma/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Models (if downloaded locally)
+models/
+*.bin
+*.gguf
+

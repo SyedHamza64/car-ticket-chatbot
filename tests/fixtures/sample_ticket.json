@@ -1,0 +1,52 @@
+{
+  "id": 12345,
+  "subject": "Test Ticket",
+  "description": "<p>Test description</p>",
+  "status": "closed",
+  "priority": null,
+  "via": {
+    "channel": "email"
+  },
+  "created_at": "2025-01-01T10:00:00Z",
+  "updated_at": "2025-01-01T11:00:00Z",
+  "dates": {
+    "solved_at": "2025-01-01T11:00:00Z"
+  },
+  "requester": {
+    "id": 100,
+    "name": "Test Customer",
+    "email": "customer@test.com"
+  },
+  "assignee": {
+    "id": 200,
+    "name": "Test Agent",
+    "email": "agent@test.com"
+  },
+  "comments": [
+    {
+      "id": 1,
+      "type": "Comment",
+      "author_id": 100,
+      "body": "<p>Customer question</p>",
+      "plain_body": "Customer question",
+      "public": true,
+      "created_at": "2025-01-01T10:00:00Z",
+      "via": {
+        "channel": "email"
+      }
+    },
+    {
+      "id": 2,
+      "type": "Comment",
+      "author_id": 200,
+      "body": "<p>Agent response</p>",
+      "plain_body": "Agent response",
+      "public": true,
+      "created_at": "2025-01-01T10:30:00Z",
+      "via": {
+        "channel": "email"
+      }
+    }
+  ]
+}
+
