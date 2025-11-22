@@ -1,9 +1,0 @@
-Hi [Client], thanks for asking about the retrieval settings.
-
-The system handles your limited dataset (19 tickets) well. When you set "number of tickets" to 3, it uses semantic search to find the 3 most relevant tickets based on meaning - not random. With 19 tickets, retrieving 3-5 means getting 16-26% of the database (the most relevant ones per query).
-
-The system compensates for limited tickets by relying more on the 83 guide sections as the primary knowledge base. It handles this gracefully - requesting more tickets than available simply returns all available tickets without errors.
-
-I recommend increasing to 5 tickets + 5 guides (instead of 3+3) for better coverage while maintaining fast responses. All ticket data is stored locally in ChromaDB - no external APIs access your tickets. Your privacy concerns are fully addressed with local storage.
-
-Let me know if you'd like me to adjust the default settings or if you have any other questions.

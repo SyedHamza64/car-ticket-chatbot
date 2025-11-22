@@ -51,6 +51,8 @@ chat-bot-ticket/
 
 ## Quick Start
 
+> **Note:** This is the **runtime-only** branch. For setup tools, data processing, and development tools, see the `setup` branch.
+
 ### 1. Install Dependencies
 
 ```bash
@@ -66,16 +68,14 @@ Pull the recommended model:
 ollama pull gemma2:2b
 ```
 
-### 3. Initialize Vector Database (First Time Only)
+### 3. Prepare Data
 
-```bash
-python scripts/run_phase4_setup.py
-```
+**Prerequisites:**
+- Processed tickets file: `data/processed/processed_tickets.json`
+- Guides file: `data/guides/guides.json`
+- Vector database: `data/chroma/` (populated)
 
-This will:
-- Load processed tickets into ChromaDB
-- Load scraped guides into ChromaDB
-- Create embeddings for semantic search
+> **To set up data:** Switch to the `setup` branch and run the setup scripts.
 
 ### 4. Launch the Application
 
