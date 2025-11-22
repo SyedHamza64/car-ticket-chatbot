@@ -10,44 +10,37 @@ This system helps support agents draft accurate, on-brand customer responses by:
 - Maintaining brand tone and consistency
 - Generating multiple draft variations for operator selection
 
-## Project Structure
+## Project Structure (Runtime Branch)
 
 ```
 chat-bot-ticket/
 ├── streamlit_app.py       # Main web interface
 ├── requirements.txt       # Python dependencies
-├── setup.py              # Package setup
-├── pytest.ini            # Pytest configuration
+├── .env.example          # Environment configuration template
+├── .gitignore            # Git ignore rules
 ├── config/
 │   └── settings.py        # Configuration settings
 ├── src/
-│   ├── phase2/
-│   │   └── process_tickets.py      # Ticket data processing
-│   ├── phase3/
-│   │   └── scrape_guides_fast.py   # Web scraper (optimized)
 │   ├── phase4/
 │   │   ├── vector_db.py            # ChromaDB vector database
-│   │   ├── rag_pipeline.py         # RAG orchestration
-│   │   └── populate_vector_db.py   # Database setup
+│   │   └── rag_pipeline.py         # RAG orchestration
 │   └── utils/
 │       ├── logger.py               # Logging utilities
 │       └── model_checker.py        # Model validation
 ├── scripts/
-│   ├── run_streamlit.py            # Streamlit launcher
-│   ├── run_phase4_setup.py         # Database initialization
-│   ├── benchmark_models.py         # Model benchmarking
-│   ├── test_ollama_api.ps1         # Ollama API tests
-│   └── test_models_comparison.ps1  # Model comparison tests
-├── data/
-│   ├── raw/                        # Raw Zendesk exports (export_combined.json)
-│   ├── processed/                  # Processed tickets
-│   ├── guides/                     # Scraped guides
-│   └── chroma/                     # Vector database
-├── tests/                          # Unit tests
-├── diagnostics/                    # Diagnostic tools and results
-├── docs/                           # Documentation files
-└── logs/                           # Application logs
+│   └── run_streamlit.py            # Streamlit launcher
+└── data/                           # Data files (excluded from git)
+    ├── processed/                  # Processed tickets (required)
+    ├── guides/                     # Scraped guides (required)
+    └── chroma/                     # Vector database (required)
 ```
+
+> **For setup tools and development:** See the `setup` branch which includes:
+> - Data processing scripts (`src/phase2/`, `src/phase3/`)
+> - Database setup (`src/phase4/populate_vector_db.py`)
+> - Tests (`tests/`)
+> - Diagnostics (`diagnostics/`)
+> - Additional documentation (`docs/`)
 
 ## Quick Start
 
@@ -141,30 +134,22 @@ LOG_LEVEL=INFO
 LOG_FILE=./logs/app.log
 ```
 
-## Utilities
+## Data Management
 
-### Process New Tickets
+> **Note:** This branch is runtime-only. To process new tickets or update guides, switch to the `setup` branch.
 
-If you have new Zendesk ticket exports:
-
-```bash
-# Place the JSON file in data/raw/
-python -c "from src.phase2.process_tickets import TicketProcessor; TicketProcessor().process()"
-
-# Then re-populate the database
-python scripts/run_phase4_setup.py
-```
-
-### Re-scrape Guides
-
-If guides on the website are updated:
+### Switching to Setup Branch
 
 ```bash
-python -c "from src.phase3.scrape_guides_fast import GuideScraper; import asyncio; asyncio.run(GuideScraper().scrape_all())"
-
-# Then re-populate the database
-python scripts/run_phase4_setup.py
+git checkout setup
 ```
+
+The `setup` branch contains:
+- Ticket processing scripts (`src/phase2/`)
+- Guide scraping tools (`src/phase3/`)
+- Database setup scripts (`scripts/run_phase4_setup.py`)
+- Tests and diagnostics
+- Additional documentation
 
 ## Testing
 
