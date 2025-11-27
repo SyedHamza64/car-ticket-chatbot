@@ -38,9 +38,9 @@ class RAGPipeline:
         if not self.db_manager.tickets_collection or not self.db_manager.guides_collection:
             self.db_manager.create_collections()
     
-    def _get_cache_key(self, query: str, n_tickets: int, n_guides: int) -> str:
+    def _get_cache_key(self, query: str, n_tickets: int, n_guides: int, language: str = "italian") -> str:
         """Generate cache key for a query."""
-        cache_input = f"{query.lower().strip()}_{n_tickets}_{n_guides}"
+        cache_input = f"{query.lower().strip()}_{n_tickets}_{n_guides}_{language}"
         return hashlib.md5(cache_input.encode()).hexdigest()
     
     def _get_cached_response(self, cache_key: str) -> Optional[Dict[str, Any]]:
@@ -101,35 +101,85 @@ class RAGPipeline:
                 context_parts.append(f"\n[TICKET {i}]")
                 context_parts.append(f"Subject: {metadata.get('subject', 'N/A')}")
                 context_parts.append(f"Status: {metadata.get('status', 'N/A')}")
-                context_parts.append(f"Content: {doc[:500]}...")  # Limit length
+                context_parts.append(f"Content: {doc[:800]}...")  # Increased limit
                 context_parts.append("")
         
-        # Add relevant guides
+        # Add relevant guides - show more content and highlight products
         if results['guides']['documents'] and results['guides']['documents'][0]:
             context_parts.append("\n=== TECHNICAL GUIDES ===\n")
             for i, (doc, metadata) in enumerate(zip(
                 results['guides']['documents'][0],
                 results['guides']['metadatas'][0]
             ), 1):
+                doc_type = metadata.get('type', 'guide_section')
+                guide_title = metadata.get('guide_title', 'N/A')
+                section_title = metadata.get('section_title', 'N/A')
+                
                 context_parts.append(f"\n[GUIDE {i}]")
-                context_parts.append(f"Guide: {metadata.get('guide_title', 'N/A')}")
-                context_parts.append(f"Section: {metadata.get('section_title', 'N/A')}")
-                context_parts.append(f"Content: {doc[:700]}...")  # More context for guides
+                context_parts.append(f"Guide: {guide_title}")
+                
+                # Show section type for clarity
+                if doc_type == 'guide_tips':
+                    context_parts.append(f"Tipo: Note e Suggerimenti Pratici")
+                elif doc_type == 'guide_products':
+                    context_parts.append(f"Tipo: Prodotti Consigliati")
+                elif section_title:
+                    context_parts.append(f"Sezione: {section_title}")
+                
+                # Show full content (increased from 700 to 1200)
+                content = doc[:1200]
+                if len(doc) > 1200:
+                    content += "..."
+                context_parts.append(f"Contenuto: {content}")
                 context_parts.append("")
         
         return "\n".join(context_parts)
     
-    def create_prompt(self, query: str, context: str) -> str:
+    def create_prompt(self, query: str, context: str, language: str = "italian") -> str:
         """Create optimized prompt for LLM with context and query.
         
         Args:
             query: User query
             context: Retrieved and formatted context
+            language: Response language ("italian" or "english")
             
         Returns:
             Complete prompt for LLM
         """
-        prompt = f"""Sei un assistente AI esperto per il team di supporto clienti di LaCuraDellAuto. Il tuo compito è aiutare a formulare risposte professionali e accurate alle domande dei clienti riguardo prodotti e tecniche di car detailing.
+        if language.lower() == "english":
+            prompt = f"""You are an expert AI assistant for LaCuraDellAuto customer support team. Your task is to help formulate professional and accurate responses to customer questions about car detailing products and techniques.
+
+=== CONTEXT FROM KNOWLEDGE BASE ===
+{context}
+
+=== CUSTOMER QUESTION ===
+{query}
+
+=== INSTRUCTIONS ===
+1. Carefully analyze the provided context (historical tickets and technical guides)
+2. Formulate a clear, professional, and friendly response in English
+3. **PRODUCTS**: When the question is about which product to use or how to solve a specific problem, recommend products from the context (e.g., "Gyeon Q2M Bathe", "Gtechniq C2"). DON'T force products if the question is purely informational
+4. Cite techniques or steps from the guides when relevant
+5. Use a friendly but professional tone, like an expert giving advice
+6. Structure the response clearly (2-4 paragraphs, complete and detailed)
+7. Make sure to complete all sentences and close the response professionally with a greeting
+8. If the context doesn't contain sufficient information, say so clearly and suggest checking the catalog on the website
+9. IMPORTANT: Use ONLY products mentioned in the context - do not invent product names
+10. Recommend products when: the customer asks for advice, wants to solve a problem, or asks what to use. DON'T recommend products for purely theoretical questions
+
+=== EXAMPLE OF GOOD RESPONSE ===
+"Hello! To properly wash your car without scratching the paint, I recommend following these steps:
+
+First of all, it's important to pre-wash the car with a water jet to remove surface dirt. This step is fundamental to avoid scratches during washing.
+
+For the actual washing, use a specific car shampoo and a quality microfiber mitt. Work with linear movements rather than circular ones, and rinse the mitt frequently in the bucket.
+
+Finally, dry the car with an absorbent microfiber cloth to avoid water spots. If you have other questions, I'm here to help!"
+
+=== YOUR RESPONSE ==="""
+        else:
+            # Italian (default)
+            prompt = f"""Sei un assistente AI esperto per il team di supporto clienti di LaCuraDellAuto. Il tuo compito è aiutare a formulare risposte professionali e accurate alle domande dei clienti riguardo prodotti e tecniche di car detailing.
 
 === CONTESTO DALLA BASE DI CONOSCENZA ===
 {context}
@@ -140,14 +190,14 @@ class RAGPipeline:
 === ISTRUZIONI ===
 1. Analizza attentamente il contesto fornito (ticket storici e guide tecniche)
 2. Formula una risposta chiara, professionale e cordiale in italiano
-3. Cita prodotti specifici, tecniche o passaggi dalle guide quando rilevante
-4. Usa un tono amichevole ma professionale, come un esperto che consiglia
-5. Struttura la risposta in modo chiaro (2-4 paragrafi, completa e dettagliata)
-6. Assicurati di completare tutte le frasi e di chiudere la risposta in modo professionale con un saluto
-7. Se il contesto non contiene informazioni sufficienti, dillo chiaramente e suggerisci alternative
-8. IMPORTANTE: NON inventare MAI nomi di prodotti che non sono presenti nel contesto. Riferisciti SOLO ai prodotti menzionati esplicitamente nelle guide o nei ticket storici
-9. Se non trovi prodotti specifici per la richiesta, dillo chiaramente invece di inventare nomi (es: "Non ho trovato prodotti specifici per [categoria] nelle guide, ma consiglio di consultare il catalogo sul sito")
-10. Evita di inventare qualsiasi informazione non presente nel contesto (prodotti, tecniche, procedure)
+3. **PRODOTTI**: Quando la domanda riguarda quale prodotto usare o come risolvere un problema specifico, raccomanda prodotti dal contesto (es: "Gyeon Q2M Bathe", "Gtechniq C2"). NON forzare prodotti se la domanda è solo informativa
+4. Cita tecniche o passaggi dalle guide quando rilevante
+5. Usa un tono amichevole ma professionale, come un esperto che consiglia
+6. Struttura la risposta in modo chiaro (2-4 paragrafi, completa e dettagliata)
+7. Assicurati di completare tutte le frasi e di chiudere la risposta in modo professionale con un saluto
+8. Se il contesto non contiene informazioni sufficienti, dillo chiaramente e suggerisci di consultare il catalogo sul sito
+9. IMPORTANTE: Usa SOLO prodotti menzionati nel contesto - non inventare nomi di prodotti
+10. Raccomanda prodotti quando: il cliente chiede consigli, vuole risolvere un problema, o chiede cosa usare. NON raccomandare prodotti per domande puramente teoriche
 
 === ESEMPIO DI BUONA RISPOSTA ===
 "Ciao! Per lavare correttamente la tua auto senza graffiare la vernice, ti consiglio di seguire questi passaggi:
@@ -206,7 +256,8 @@ Infine, asciuga l'auto con un panno in microfibra assorbente per evitare aloni. 
             return f"Error: Unable to generate response. {str(e)}"
     
     def query(self, user_query: str, n_tickets: int = 3, n_guides: int = 3, 
-              stream: bool = False, use_cache: bool = True, num_drafts: int = 1) -> Dict[str, Any]:
+              stream: bool = False, use_cache: bool = True, num_drafts: int = 1,
+              language: str = "italian") -> Dict[str, Any]:
         """Main query method - retrieves context and generates response(s) with caching.
         
         Args:
@@ -226,7 +277,7 @@ Infine, asciuga l'auto con un panno in microfibra assorbente per evitare aloni. 
         
         # Check cache first (only for non-streaming queries)
         if use_cache and not stream:
-            cache_key = self._get_cache_key(user_query, n_tickets, n_guides)
+            cache_key = self._get_cache_key(user_query, n_tickets, n_guides, language)
             cached = self._get_cached_response(cache_key)
             if cached:
                 return cached
@@ -238,7 +289,7 @@ Infine, asciuga l'auto con un panno in microfibra assorbente per evitare aloni. 
         formatted_context = self.format_context(results)
         
         # Step 3: Create prompt
-        prompt = self.create_prompt(user_query, formatted_context)
+        prompt = self.create_prompt(user_query, formatted_context, language=language)
         
         # Step 4: Generate response(s)
         if num_drafts == 1:

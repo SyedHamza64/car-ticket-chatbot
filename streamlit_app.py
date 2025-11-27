@@ -1,6 +1,6 @@
 """
-LaCuraDellAuto AI Support Assistant - Streamlit Interface
-A modern, professional interface for customer support agents.
+LaCuraDellAuto AI Support Assistant
+Modern, Clean, Professional Interface
 """
 
 import streamlit as st
@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import sys
-import streamlit.components.v1 as components
+import subprocess
 
 # Add project root to path
 project_root = Path(__file__).parent
@@ -17,132 +17,462 @@ sys.path.insert(0, str(project_root))
 
 from src.phase4.rag_pipeline import RAGPipeline
 from src.phase4.vector_db import VectorDBManager
-from src.utils.model_checker import get_available_models, is_model_available
-
-# Initialize copy state
-if 'copy_trigger' not in st.session_state:
-    st.session_state.copy_trigger = None
-    st.session_state.copy_text = None
-
+from src.utils.model_checker import get_available_models
 
 # Page configuration
 st.set_page_config(
-    page_title="AI Support Assistant",
-    page_icon="🤖",
+    page_title="LaCuraDellAuto AI",
+    page_icon="🚗",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for modern, professional look
+# Modern CSS - Dark theme with accent colors
 st.markdown("""
 <style>
-    /* Main container */
-    .main {
-        padding: 2rem;
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    
+    :root {
+        --bg-primary: #0a0a0f;
+        --bg-secondary: #12121a;
+        --bg-card: #1a1a24;
+        --bg-hover: #22222e;
+        --accent: #6366f1;
+        --accent-light: #a5b4fc;
+        --accent-glow: rgba(99, 102, 241, 0.3);
+        --text-primary: #ffffff;
+        --text-secondary: #e2e8f0;
+        --text-muted: #94a3b8;
+        --text-heading: #c7d2fe;
+        --border: #2a2a3a;
+        --success: #34d399;
+        --warning: #fbbf24;
+        --error: #f87171;
     }
     
-    /* Headers */
-    h1 {
-        color: #1e40af;
-        font-weight: 700;
+    * {
+        font-family: 'Space Grotesk', -apple-system, sans-serif;
     }
     
-    h2, h3 {
-        color: #3b82f6;
-        font-weight: 600;
+    code, .stCode, pre {
+        font-family: 'JetBrains Mono', monospace !important;
     }
     
-    /* Query input area */
-    .stTextArea textarea {
-        font-size: 16px;
-        border-radius: 10px;
-        border: 2px solid #e5e7eb;
-        padding: 1rem;
+    /* Main app background */
+    .stApp {
+        background: var(--bg-primary);
     }
     
-    .stTextArea textarea:focus {
-        border-color: #3b82f6;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-    }
-    
-    /* Buttons */
-    .stButton button {
-        background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 0.75rem 2rem;
-        font-weight: 600;
-        font-size: 16px;
-        transition: all 0.3s ease;
-    }
-    
-    .stButton button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3);
-    }
-    
-    /* Response container */
-    .response-box {
-        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-        border-left: 4px solid #3b82f6;
-        border-radius: 10px;
-        padding: 1.5rem;
-        margin: 1rem 0;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-    }
-    
-    /* Context boxes */
-    .context-box {
-        background: #f9fafb;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 1rem;
-        margin: 0.5rem 0;
-    }
-    
-    /* Stats */
-    .stat-card {
-        background: white;
-        border-radius: 10px;
-        padding: 1rem;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-        border-left: 4px solid #3b82f6;
-    }
-    
-    /* History item */
-    .history-item {
-        background: white;
-        border-radius: 8px;
-        padding: 0.75rem;
-        margin: 0.5rem 0;
-        border-left: 3px solid #d1d5db;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-    
-    .history-item:hover {
-        border-left-color: #3b82f6;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* Success/Info messages */
-    .success-msg {
-        background: #d1fae5;
-        color: #065f46;
-        padding: 1rem;
-        border-radius: 8px;
-        border-left: 4px solid #10b981;
-    }
-    
-    /* Sidebar styling */
-    .css-1d391kg {
-        background: #f9fafb;
+    .main .block-container {
+        padding: 2rem 3rem;
+        max-width: 1400px;
     }
     
     /* Hide Streamlit branding */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
+    #MainMenu, footer, header {visibility: hidden;}
+    
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background: var(--bg-secondary);
+        border-right: 1px solid var(--border);
+    }
+    
+    section[data-testid="stSidebar"] .block-container {
+        padding: 2rem 1.5rem;
+    }
+    
+    /* Header */
+    .app-header {
+        background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .app-header::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, var(--accent), var(--accent-light), #a78bfa);
+    }
+    
+    .app-header h1 {
+        color: var(--text-primary);
+        font-size: 2rem;
+        font-weight: 700;
+        margin: 0 0 0.5rem 0;
+        letter-spacing: -0.5px;
+    }
+    
+    .app-header p {
+        color: var(--text-secondary);
+        font-size: 1rem;
+        margin: 0;
+    }
+    
+    /* Cards */
+    .card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        transition: all 0.2s ease;
+    }
+    
+    .card:hover {
+        border-color: var(--accent);
+        box-shadow: 0 0 20px var(--accent-glow);
+    }
+    
+    .card-title {
+        color: var(--text-primary);
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    /* Stats */
+    .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .stat-box {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 1rem;
+        text-align: center;
+    }
+    
+    .stat-value {
+        color: var(--accent-light);
+        font-size: 1.75rem;
+        font-weight: 700;
+    }
+    
+    .stat-label {
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 0.25rem;
+    }
+    
+    /* Response area */
+    .response-box {
+        background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+        border: 1px solid #4338ca;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+    }
+    
+    .response-text {
+        color: #e0e7ff;
+        font-size: 1rem;
+        line-height: 1.8;
+        white-space: pre-wrap;
+    }
+    
+    /* ALL Buttons - Force dark theme */
+    .stButton > button,
+    button[kind="primary"],
+    button[kind="secondary"],
+    [data-testid="baseButton-primary"],
+    [data-testid="baseButton-secondary"],
+    .stDownloadButton > button,
+    div[data-testid="stFormSubmitButton"] > button {
+        background: linear-gradient(135deg, var(--accent) 0%, #4f46e5 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        padding: 0.6rem 1.25rem !important;
+        font-weight: 600 !important;
+        font-size: 0.9rem !important;
+        transition: all 0.2s ease !important;
+        box-shadow: 0 2px 10px var(--accent-glow) !important;
+    }
+    
+    .stButton > button:hover,
+    button[kind="primary"]:hover,
+    button[kind="secondary"]:hover,
+    [data-testid="baseButton-primary"]:hover,
+    [data-testid="baseButton-secondary"]:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 20px var(--accent-glow) !important;
+        background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%) !important;
+        color: white !important;
+    }
+    
+    .stButton > button:active {
+        transform: translateY(0) !important;
+    }
+    
+    .stButton > button:focus,
+    button:focus {
+        outline: none !important;
+        box-shadow: 0 0 0 3px var(--accent-glow) !important;
+    }
+    
+    /* Button text color fix */
+    .stButton > button p,
+    .stButton > button span,
+    .stButton > button div {
+        color: white !important;
+    }
+    
+    /* Text inputs */
+    .stTextArea textarea, .stTextInput input, .stSelectbox > div > div {
+        background: var(--bg-secondary) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: 8px !important;
+        color: var(--text-primary) !important;
+        font-size: 0.95rem !important;
+    }
+    
+    .stTextArea textarea:focus, .stTextInput input:focus {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 2px var(--accent-glow) !important;
+    }
+    
+    /* Labels */
+    .stTextArea label, .stTextInput label, .stSelectbox label, .stRadio label {
+        color: var(--text-primary) !important;
+        font-size: 0.9rem !important;
+        font-weight: 600 !important;
+    }
+    
+    /* Sidebar text */
+    section[data-testid="stSidebar"] h2, 
+    section[data-testid="stSidebar"] h3,
+    section[data-testid="stSidebar"] .stMarkdown h2,
+    section[data-testid="stSidebar"] .stMarkdown h3 {
+        color: var(--text-heading) !important;
+        font-weight: 600 !important;
+    }
+    
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] span,
+    section[data-testid="stSidebar"] label {
+        color: var(--text-secondary) !important;
+    }
+    
+    /* Main headings */
+    h1, h2, h3, h4 {
+        color: var(--text-primary) !important;
+    }
+    
+    .stMarkdown h3, .stMarkdown h4 {
+        color: var(--text-heading) !important;
+        font-weight: 600 !important;
+    }
+    
+    /* Radio buttons text */
+    .stRadio > div > label {
+        color: var(--text-primary) !important;
+    }
+    
+    /* Caption text - make it brighter */
+    .stCaption, small, .stMarkdown small {
+        color: var(--text-muted) !important;
+    }
+    
+    /* Italic text */
+    em, i, .stMarkdown em {
+        color: var(--text-secondary) !important;
+        font-style: italic;
+    }
+    
+    /* Bold text */
+    strong, b, .stMarkdown strong {
+        color: var(--text-primary) !important;
+        font-weight: 600 !important;
+    }
+    
+    /* Paragraph text */
+    p, .stMarkdown p {
+        color: var(--text-secondary) !important;
+    }
+    
+    /* Code inline */
+    code {
+        background: var(--bg-hover) !important;
+        color: var(--accent-light) !important;
+        padding: 0.2rem 0.5rem !important;
+        border-radius: 4px !important;
+    }
+    
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0;
+        background: var(--bg-secondary);
+        border-radius: 10px;
+        padding: 4px;
+        border: 1px solid var(--border);
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: transparent;
+        border-radius: 8px;
+        color: var(--text-secondary);
+        font-weight: 500;
+        padding: 0.75rem 1.5rem;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: var(--accent) !important;
+        color: white !important;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-weight: 500;
+    }
+    
+    .streamlit-expanderContent {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+    }
+    
+    /* Metrics */
+    [data-testid="stMetricValue"] {
+        color: var(--accent-light) !important;
+        font-size: 1.75rem !important;
+        font-weight: 700 !important;
+    }
+    
+    [data-testid="stMetricLabel"] {
+        color: var(--text-secondary) !important;
+        font-weight: 500 !important;
+    }
+    
+    /* Form labels */
+    .stForm label {
+        color: var(--text-primary) !important;
+        font-weight: 500 !important;
+    }
+    
+    /* Form submit button */
+    .stForm [data-testid="stFormSubmitButton"] button {
+        background: linear-gradient(135deg, var(--accent) 0%, #4f46e5 100%) !important;
+        color: white !important;
+    }
+    
+    /* File uploader */
+    [data-testid="stFileUploader"] {
+        background: var(--bg-secondary) !important;
+        border: 1px dashed var(--border) !important;
+        border-radius: 8px !important;
+    }
+    
+    [data-testid="stFileUploader"]:hover {
+        border-color: var(--accent) !important;
+    }
+    
+    [data-testid="stFileUploader"] section {
+        background: transparent !important;
+    }
+    
+    [data-testid="stFileUploader"] button {
+        background: var(--bg-card) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border) !important;
+    }
+    
+    /* Tooltips / Help text */
+    .stTooltipIcon {
+        color: var(--text-muted) !important;
+    }
+    
+    /* Divider */
+    hr {
+        border-color: var(--border);
+        margin: 1.5rem 0;
+    }
+    
+    /* Info/Warning/Error boxes */
+    .stAlert {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+    }
+    
+    /* Spinner */
+    .stSpinner > div {
+        border-color: var(--accent) transparent transparent transparent;
+    }
+    
+    /* Progress bar */
+    .stProgress > div > div {
+        background: linear-gradient(90deg, var(--accent), var(--accent-light));
+    }
+    
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: var(--bg-secondary);
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--text-muted);
+    }
+    
+    /* Badge */
+    .badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .badge-success {
+        background: rgba(34, 197, 94, 0.2);
+        color: #4ade80;
+        border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+    
+    .badge-warning {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    
+    .badge-info {
+        background: rgba(99, 102, 241, 0.2);
+        color: #818cf8;
+        border: 1px solid rgba(99, 102, 241, 0.3);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -150,605 +480,490 @@ st.markdown("""
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
     st.session_state.pipeline = None
-    st.session_state.history = []
+    st.session_state.current_model = None
+    st.session_state.stats = {'tickets': 0, 'guides': 0}
+    st.session_state.query_history = []
     st.session_state.current_response = None
     st.session_state.current_context = None
-    st.session_state.loading = False
-    st.session_state.stats = None
 
 # Initialize RAG Pipeline (cached)
 @st.cache_resource
 def initialize_pipeline(model_name):
-    """Initialize the RAG pipeline (runs once per model)."""
+    """Initialize the RAG pipeline."""
     try:
         import os
-        # Force the model to be used
         os.environ['OLLAMA_MODEL'] = model_name
         
-        # Clear any cached imports
-        if 'config.settings' in sys.modules:
-            del sys.modules['config.settings']
+        for module in ['config.settings', 'src.phase4.rag_pipeline', 'src.phase4']:
+            if module in sys.modules:
+                del sys.modules[module]
         
+        from src.phase4.rag_pipeline import RAGPipeline
         pipeline = RAGPipeline(model=model_name)
         return pipeline, None
     except Exception as e:
         return None, str(e)
 
-# Model selection (optimized for speed + quality)
-# Preferred models in order of preference
-PREFERRED_MODELS = [
-    'mistral:7b-instruct',           # RECOMMENDED: Fast + Best quality (7B quantized) ⚡
-    'mixtral:8x7b-instruct',         # Maximum quality (8x7B quantized) - if available
-    'qwen2.5:7b-instruct',           # Balanced (7B quantized)
-    'llama3.1:8b',                   # Alternative (8B quantized)
-    'gemma2:2b',                     # Fast baseline (2B - fast but lower quality)
-    'qwen2.5:14b',                   # High quality (14B - slower)
-]
-
-# Get actually available models
+# Get available models
 try:
     installed_models = get_available_models()
-    
-    # Build available models list by matching preferred to installed
-    AVAILABLE_MODELS = []
-    used_models = set()
-    
-    # First, try to match preferred models to installed ones
-    for preferred in PREFERRED_MODELS:
-        base_name = preferred.split(':')[0]  # e.g., 'mistral' from 'mistral:7b-instruct'
-        
-        # Find matching installed models
-        for installed in installed_models:
-            if installed not in used_models:
-                # Check if base name matches (e.g., 'mistral' matches 'mistral:7b-instruct')
-                if installed.startswith(base_name + ':') or installed == base_name:
-                    AVAILABLE_MODELS.append(installed)
-                    used_models.add(installed)
-                    break  # Use first match for this preferred model
-    
-    # Add any remaining installed models not in preferred list
-    for installed in installed_models:
-        if installed not in used_models:
-            AVAILABLE_MODELS.append(installed)
-    
-    # Ensure we have at least gemma2:2b if nothing else works
-    if not AVAILABLE_MODELS:
-        AVAILABLE_MODELS = installed_models if installed_models else ['gemma2:2b']
-    
-    # Default to mistral:7b-instruct if available, otherwise gemma2:2b
-    default_index = 0
-    if 'mistral:7b-instruct' in AVAILABLE_MODELS:
-        default_index = AVAILABLE_MODELS.index('mistral:7b-instruct')
-    elif 'gemma2:2b' in AVAILABLE_MODELS:
-        default_index = AVAILABLE_MODELS.index('gemma2:2b')
-        
-except Exception as e:
-    # Fallback to known models if check fails
-    st.warning(f"Error checking models: {e}")
-    AVAILABLE_MODELS = ['mistral:7b-instruct', 'gemma2:2b', 'qwen2.5:7b-instruct', 'llama3.1:8b', 'qwen2.5:14b']
-    default_index = 0
+    AVAILABLE_MODELS = installed_models if installed_models else ['gemma2:2b', 'llama3.1:8b']
+except:
+    AVAILABLE_MODELS = ['gemma2:2b', 'llama3.1:8b']
 
-selected_model = st.sidebar.selectbox(
-    "🤖 Select Model",
-    AVAILABLE_MODELS,
-    index=default_index,
-    help="Select an Ollama model. If model not available, pull it first: ollama pull <model-name>"
-)
-
-# Check if model changed
-if 'current_model' not in st.session_state:
-    st.session_state.current_model = None
-
-model_changed = st.session_state.current_model != selected_model
-
-# Load pipeline on first run or model change
-if not st.session_state.initialized or model_changed:
-    with st.spinner(f"🚀 Initializing AI Assistant with {selected_model}..."):
-        # Clear cache if model changed
-        if model_changed and st.session_state.initialized:
-            st.cache_resource.clear()
-        
-        pipeline, error = initialize_pipeline(selected_model)
-        if error:
-            st.error(f"❌ Failed to initialize model '{selected_model}': {error}")
-            if "not found" in str(error).lower() or "404" in str(error):
-                st.warning(f"💡 Model '{selected_model}' is not installed. Pull it first:")
-                st.code(f"ollama pull {selected_model}", language="bash")
-                st.info("After pulling, refresh this page.")
-            st.stop()
-        else:
-            st.session_state.pipeline = pipeline
-            st.session_state.initialized = True
-            st.session_state.current_model = selected_model
-            
-            # Get initial stats
-            try:
-                st.session_state.stats = pipeline.db_manager.get_stats()
-            except:
-                st.session_state.stats = {'tickets': 0, 'guides': 0}
-
-# Sidebar
+# ============================================================================
+# SIDEBAR
+# ============================================================================
 with st.sidebar:
-    st.title("⚙️ Settings")
+    st.markdown("## ⚙️ **Settings**")
     
-    # Retrieval settings
-    st.markdown("### 🔍 Retrieval Settings")
-    n_tickets = st.slider("Number of tickets", 1, 5, 3)
-    n_guides = st.slider("Number of guides", 1, 5, 3)
-    
-    st.divider()
-    
-    # Draft generation settings
-    st.markdown("### 📝 Draft Options")
-    num_drafts = st.selectbox(
-        "Number of drafts",
-        options=[1, 2, 3],
-        index=0,  # Default to 1 draft (optimized for speed)
-        help="Generate multiple draft responses. Note: Sequential generation (optimized for single GPU). For fastest responses, use 1 draft."
+    # Model Selection
+    selected_model = st.selectbox(
+        "🤖 **AI Model**",
+        AVAILABLE_MODELS,
+        index=0,
+        help="Select Ollama model"
     )
     
-    if num_drafts > 1:
-        st.caption(f"⚡ Will generate {num_drafts} variations sequentially (optimized for single GPU)")
-        # Timing estimates based on selected model
-        if selected_model == 'gemma2:2b':
-            # Fast 2B model
-            time_estimates = {1: 8, 2: 15, 3: 22}
-        elif '7b' in selected_model or '8b' in selected_model:
-            # Medium 7-8B models
-            time_estimates = {1: 30, 2: 55, 3: 75}
-        else:
-            # Larger models (14B, etc.)
-            time_estimates = {1: 60, 2: 110, 3: 150}
-        
-        est_time = time_estimates.get(num_drafts, num_drafts * (time_estimates.get(1, 30)))
-        st.caption(f"⏱️ Est. time: ~{est_time}s")
+    # Language
+    st.markdown("---")
+    language = st.radio(
+        "🌐 **Response Language**",
+        ["🇮🇹 Italiano", "🇬🇧 English"],
+        index=0
+    )
+    language_code = "italian" if "Italiano" in language else "english"
     
-    # Statistics
-    st.markdown("### 📊 Database Stats")
-    if st.session_state.stats:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Tickets", st.session_state.stats['tickets'])
-        with col2:
-            st.metric("Guides", st.session_state.stats['guides'])
-    
-    st.divider()
-    
-    # History
-    st.markdown("### 📜 Query History")
-    if st.session_state.history:
-        st.caption(f"{len(st.session_state.history)} queries")
-        
-        # Show last 5 queries
-        for i, item in enumerate(reversed(st.session_state.history[-5:])):
-            # Format time display
-            elapsed = item.get('time', 0)
-            cached = item.get('cached', False)
-            if cached:
-                time_display = "⚡ <0.01s"
-            else:
-                time_display = f"⏱️ {elapsed:.2f}s"
+    # Initialize model
+    st.markdown("---")
+    model_changed = st.session_state.current_model != selected_model
+
+    if not st.session_state.initialized or model_changed:
+        with st.spinner(f"Loading {selected_model}..."):
+            if model_changed and st.session_state.initialized:
+                st.cache_resource.clear()
             
-            with st.expander(f"🕐 {item['timestamp']} | {time_display}", expanded=False):
-                st.caption(item['query'][:100] + "..." if len(item['query']) > 100 else item['query'])
-                if st.button(f"Load", key=f"load_{len(st.session_state.history)-i-1}"):
-                    st.session_state.current_response = item['response']
-                    st.session_state.current_context = item['context']
-                    st.session_state.response_time = item.get('time', 0)
-                    st.session_state.was_cached = item.get('cached', False)
-                    st.rerun()
-    else:
-        st.caption("No queries yet")
+            pipeline, error = initialize_pipeline(selected_model)
+            if error:
+                st.error(f"❌ {error}")
+                st.stop()
+            else:
+                st.session_state.pipeline = pipeline
+                st.session_state.initialized = True
+                st.session_state.current_model = selected_model
+                try:
+                    st.session_state.stats = pipeline.db_manager.get_stats()
+                except:
+                    st.session_state.stats = {'tickets': 0, 'guides': 0}
+
+    # Stats
+    st.markdown("### 📊 **Knowledge Base**")
+    col1, col2 = st.columns(2)
+    col1.metric("Tickets", st.session_state.stats['tickets'])
+    col2.metric("Guides", st.session_state.stats['guides'])
     
-    st.divider()
+    # Actions
+    st.markdown("---")
+    st.markdown("### ⚡ **Actions**")
     
-    # Clear history
-    if st.button("🗑️ Clear History"):
-        st.session_state.history = []
-        st.session_state.current_response = None
-        st.session_state.current_context = None
-        st.rerun()
-    
-    # Clear cache
-    if st.button("🔄 Clear Cache"):
-        if hasattr(st.session_state.pipeline, '_cache'):
-            cache_size = len(st.session_state.pipeline._cache)
-            st.session_state.pipeline._cache.clear()
-            st.success(f"✓ Cleared {cache_size} cached responses")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.cache_resource.clear()
+            st.rerun()
+    with col2:
+        if st.button("🗑️ Clear", use_container_width=True):
+            st.session_state.query_history = []
+            st.session_state.current_response = None
             st.rerun()
     
-    # Performance info
-    st.divider()
-    st.markdown("### ⚡ Performance")
-    
-    # Calculate average response time from history
-    if st.session_state.history:
-        times = [h.get('time', 0) for h in st.session_state.history if not h.get('cached', False)]
-        cached_count = sum(1 for h in st.session_state.history if h.get('cached', False))
-        if times:
-            avg_time = sum(times) / len(times)
-            st.metric("Avg Response Time", f"{avg_time:.2f}s", help="Average time for non-cached responses")
-        if cached_count > 0:
-            st.metric("Cache Hits", f"{cached_count}/{len(st.session_state.history)}", 
-                     help="Number of instant cached responses")
-    
-    st.caption("✅ Italian-optimized prompt")
-    st.caption("✅ Smart caching enabled")
-    st.caption("✅ qwen2.5:7b-instruct")
-    if hasattr(st.session_state.pipeline, '_cache'):
-        cache_size = len(st.session_state.pipeline._cache)
-        st.caption(f"📦 {cache_size} cached responses")
-
-# Main interface
-st.title("🤖 AI Support Assistant")
-st.markdown("### LaCuraDellAuto - Customer Support Helper")
-
-# Instructions
-with st.expander("ℹ️ How to use", expanded=False):
-    st.markdown("""
-    1. **Paste** the customer's question in Italian or English
-    2. Click **Generate Response** 
-    3. Review the AI-generated response and retrieved context
-    4. **Copy** the response or **edit** it before sending to customer
-    5. Optionally **rate** the response to help improve the system
-    """)
-
-# Query input area
-st.markdown("#### 📝 Customer Query")
-query = st.text_area(
-    "Enter the customer's question:",
-    height=120,
-    placeholder="Example: Come posso rimuovere i graffi dalla mia auto?\n\nThe AI will search through historical tickets and technical guides to generate a helpful response.",
-    label_visibility="collapsed"
-)
-
-# Action buttons
-col1, col2, col3 = st.columns([2, 1, 1])
-with col1:
-    generate_btn = st.button("✨ Generate Response", type="primary", use_container_width=True)
-with col2:
-    clear_btn = st.button("🔄 Clear", use_container_width=True)
-with col3:
-    example_btn = st.button("💡 Example", use_container_width=True)
-
-# Handle example button
-if example_btn:
-    query = "Come posso lucidare la mia auto per rimuovere i graffi?"
-    st.rerun()
-
-# Handle clear button
-if clear_btn:
-    st.session_state.current_response = None
-    st.session_state.current_context = None
-    st.rerun()
-
-# Handle generate button
-if generate_btn and query.strip():
-    # Timing estimates based on selected model
-    if selected_model == 'gemma2:2b':
-        # Fast 2B model - TARGET: ~20s for 3 drafts
-        time_estimates = {1: 8, 2: 15, 3: 22}
-    elif '7b' in selected_model or '8b' in selected_model:
-        # Medium 7-8B models
-        time_estimates = {1: 30, 2: 55, 3: 75}
-    else:
-        # Larger models (14B, etc.)
-        time_estimates = {1: 60, 2: 110, 3: 150}
-    
-    est_time = time_estimates.get(num_drafts, num_drafts * (time_estimates.get(1, 30)))
-    
-    with st.spinner(f"🤔 Thinking... This may take ~{est_time} seconds"):
-        try:
-            # Progress indicator
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Step 1: Retrieving context
-            status_text.text("🔍 Searching knowledge base...")
-            progress_bar.progress(25)
-            time.sleep(0.5)
-            
-            # Step 2: Generating response
-            if num_drafts > 1:
-                status_text.text(f"✨ Generating {num_drafts} drafts sequentially (optimized for GPU efficiency)...")
-            else:
-                status_text.text("✨ Generating response...")
-            progress_bar.progress(50)
-            
-            # Track timing
-            start_time = time.time()
-            
-            # Actual query
-            result = st.session_state.pipeline.query(
-                query,
-                n_tickets=n_tickets,
-                n_guides=n_guides,
-                num_drafts=num_drafts
-            )
-            
-            # Calculate elapsed time
-            elapsed_time = time.time() - start_time
-            
-            progress_bar.progress(90)
-            status_text.text("✅ Complete!")
-            time.sleep(0.3)
-            
-            # Clear progress indicators
-            progress_bar.empty()
-            status_text.empty()
-            
-            # Determine if cached
-            was_cached = elapsed_time < 1.0  # If response was instant, it was cached
-            
-            # Store results with timing
-            st.session_state.current_response = result['response']
-            st.session_state.current_responses = result.get('responses', None)  # Multiple drafts
-            st.session_state.num_drafts = result.get('num_drafts', 1)
-            st.session_state.current_context = result['context']
-            st.session_state.response_time = elapsed_time
-            st.session_state.was_cached = was_cached
-            st.session_state.selected_draft = 0  # Default to first draft
-            
-            # Add to history
-            st.session_state.history.append({
-                'timestamp': datetime.now().strftime("%H:%M:%S"),
-                'query': query,
-                'response': result['response'],
-                'context': result['context'],
-                'time': elapsed_time,
-                'cached': was_cached
-            })
-            
-            # Success message with timing
-            if was_cached:
-                st.success(f"✅ Response generated instantly! (Cached)")
-            elif num_drafts > 1:
-                st.success(f"✅ {num_drafts} drafts generated in {elapsed_time:.2f} seconds! Choose your favorite below.")
-            else:
-                st.success(f"✅ Response generated in {elapsed_time:.2f} seconds!")
-            
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
-            st.exception(e)
-
-# Display response(s)
-if st.session_state.current_response:
+    # Footer
     st.markdown("---")
+    st.caption(f"Model: `{st.session_state.current_model}`")
+
+# ============================================================================
+# MAIN CONTENT
+# ============================================================================
+
+# Header
+    st.markdown("""
+<div class="app-header">
+    <h1>🚗 LaCuraDellAuto AI</h1>
+    <p>Intelligent Customer Support Assistant</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Main tabs
+tab_query, tab_manage = st.tabs(["💬 Ask Question", "🗄️ Manage Knowledge Base"])
+
+# ============================================================================
+# TAB 1: QUERY INTERFACE
+# ============================================================================
+with tab_query:
+    # Query input
+    st.markdown("### 💬 **What would you like to know?**")
     
-    # Check if multiple drafts
-    has_multiple_drafts = (st.session_state.get('current_responses') is not None and 
-                           st.session_state.get('num_drafts', 1) > 1)
-    
-    if has_multiple_drafts:
-        # Multiple drafts - show in tabs
-        st.markdown("#### ✨ AI Generated Drafts - Choose Your Favorite")
-        
-        # Show timing
-        if hasattr(st.session_state, 'response_time'):
-            elapsed = st.session_state.response_time
-            st.caption(f"⏱️ Generated {st.session_state.num_drafts} drafts in {elapsed:.2f} seconds")
-        
-        # Create tabs for each draft
-        draft_responses = st.session_state.current_responses
-        tab_labels = [f"Draft {i+1}" for i in range(len(draft_responses))]
-        tabs = st.tabs(tab_labels)
-        
-        for i, tab in enumerate(tabs):
-            with tab:
-                draft = draft_responses[i]
+    query = st.text_area(
+        "Enter your question",
+        height=100,
+        placeholder="Es: Come posso rimuovere i graffi dalla carrozzeria?\nEs: Quale prodotto usare per lucidare l'auto?",
+        label_visibility="collapsed"
+    )
+
+    # Options row
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+    with col1:
+        n_tickets = st.selectbox("📋 Tickets", [1, 2, 3, 4, 5], index=2, label_visibility="collapsed")
+    with col2:
+        n_guides = st.selectbox("📚 Guides", [1, 2, 3, 4, 5], index=2, label_visibility="collapsed")
+    with col3:
+        num_drafts = st.selectbox("📝 Drafts", [1, 2, 3], index=0, label_visibility="collapsed")
+    with col4:
+        generate_btn = st.button("✨ Generate Response", type="primary", use_container_width=True)
+            
+    # Generate response
+    if generate_btn and query.strip():
+        with st.spinner("🤔 Thinking..."):
+            try:
+                start_time = time.time()
+                result = st.session_state.pipeline.query(
+                    query,
+                    n_tickets=n_tickets,
+                    n_guides=n_guides,
+                    num_drafts=num_drafts,
+                    language=language_code
+                )
+                elapsed = time.time() - start_time
                 
-                # Draft info
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    if draft['temperature'] == 0.5:
-                        st.caption("📘 Conservative (Most factual)")
-                    elif draft['temperature'] == 0.7:
-                        st.caption("📗 Balanced (Recommended)")
-                    else:
-                        st.caption("📙 Creative (More varied)")
-                with col2:
-                    st.caption(f"Temp: {draft['temperature']}")
+                st.session_state.current_response = result['response']
+                st.session_state.current_responses = result.get('responses', None)
+                st.session_state.num_drafts = result.get('num_drafts', 1)
+                st.session_state.current_context = result['context']
+                st.session_state.response_time = elapsed
                 
-                # Response text
-                st.markdown(f"""
-                <div class="response-box">
-                    {draft['text'].replace(chr(10), '<br>')}
-                </div>
-                """, unsafe_allow_html=True)
+                st.session_state.query_history.append({
+                    'time': datetime.now().strftime("%H:%M"),
+                    'query': query[:50],
+                    'response': result['response']
+                })
                 
-                # Action buttons for this draft
-                col1, col2, col3 = st.columns([2, 1, 1])
-                with col1:
-                    if st.button(f"✅ Select Draft {i+1}", key=f"select_draft_{i}", use_container_width=True):
-                        st.session_state.selected_draft = i
-                        st.session_state.current_response = draft['text']
-                        st.success(f"✅ Draft {i+1} selected!")
-                        st.rerun()
-                with col2:
-                    copy_clicked = st.button("📋 Copy", key=f"copy_draft_{i}", use_container_width=True)
-                    if copy_clicked:
-                        # Store text in session state and inject JavaScript to copy
-                        st.session_state[f'copy_text_{i}'] = draft['text']
-                        # Use JSON encoding for safe text handling
-                        json_text = json.dumps(draft['text'])
-                        copy_script = f"""
-                        <script>
-                        (function() {{
-                            const text = JSON.parse({json_text});
-                            const textarea = document.createElement('textarea');
-                            textarea.value = text;
-                            textarea.style.position = 'fixed';
-                            textarea.style.left = '-999999px';
-                            textarea.style.top = '-999999px';
-                            document.body.appendChild(textarea);
-                            textarea.focus();
-                            textarea.select();
-                            try {{
-                                if (navigator.clipboard && navigator.clipboard.writeText) {{
-                                    navigator.clipboard.writeText(text).then(function() {{
-                                        document.body.removeChild(textarea);
-                                    }}).catch(function() {{
-                                        document.execCommand('copy');
-                                        document.body.removeChild(textarea);
-                                    }});
-                                }} else {{
-                                    document.execCommand('copy');
-                                    document.body.removeChild(textarea);
-                                }}
-                            }} catch (err) {{
-                                document.body.removeChild(textarea);
-                            }}
-                        }})();
-                        </script>
-                        """
-                        components.html(copy_script, height=0)
-                        st.success("✅ Copied to clipboard!")
-                with col3:
-                    # Show if this is currently selected
-                    if st.session_state.get('selected_draft', 0) == i:
-                        st.success("✓ Selected")
-        
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+
+    # Display response
+    if st.session_state.current_response:
         st.markdown("---")
-        st.caption("💡 Tip: Different drafts use varying creativity levels. Draft 1 is most factual, Draft 3 is most creative.")
         
-    else:
-        # Single response - original display
-        # Response header with timing
+        # Response header
         col1, col2 = st.columns([3, 1])
         with col1:
-            st.markdown("#### ✨ AI Generated Response")
+            st.markdown("### 💡 AI Response")
         with col2:
-            if hasattr(st.session_state, 'response_time'):
-                elapsed = st.session_state.response_time
-                if st.session_state.get('was_cached', False):
-                    st.markdown(f"<div style='text-align: right; color: #10b981; font-size: 0.9em;'>⚡ <b>Cached</b> (<0.01s)</div>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<div style='text-align: right; color: #6366f1; font-size: 0.9em;'>⏱️ <b>{elapsed:.2f}s</b></div>", unsafe_allow_html=True)
+            st.caption(f"⏱️ {st.session_state.get('response_time', 0):.1f}s")
         
-        # Response container
-        st.markdown(f"""
-        <div class="response-box">
-            {st.session_state.current_response.replace(chr(10), '<br>')}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Action buttons for response (only for single response mode)
-    if not has_multiple_drafts:
+        # Multiple drafts
+        if st.session_state.get('num_drafts', 1) > 1 and st.session_state.get('current_responses'):
+            draft_tabs = st.tabs([f"Draft {i+1}" for i in range(st.session_state.num_drafts)])
+            for i, tab in enumerate(draft_tabs):
+                with tab:
+                    st.markdown(f"""
+                    <div class="response-box">
+                        <div class="response-text">{st.session_state.current_responses[i]['text']}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            # Single response
+            st.markdown(f"""
+            <div class="response-box">
+                <div class="response-text">{st.session_state.current_response}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Action buttons
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            copy_clicked = st.button("📋 Copy Response", use_container_width=True)
-            if copy_clicked:
-                # Store text in session state and inject JavaScript to copy
-                st.session_state['copy_text_main'] = st.session_state.current_response
-                # Use JSON encoding for safe text handling
-                json_text = json.dumps(st.session_state.current_response)
-                copy_script = f"""
-                <script>
-                (function() {{
-                    const text = JSON.parse({json_text});
-                    const textarea = document.createElement('textarea');
-                    textarea.value = text;
-                    textarea.style.position = 'fixed';
-                    textarea.style.left = '-999999px';
-                    textarea.style.top = '-999999px';
-                    document.body.appendChild(textarea);
-                    textarea.focus();
-                    textarea.select();
-                    try {{
-                        if (navigator.clipboard && navigator.clipboard.writeText) {{
-                            navigator.clipboard.writeText(text).then(function() {{
-                                document.body.removeChild(textarea);
-                            }}).catch(function() {{
-                                document.execCommand('copy');
-                                document.body.removeChild(textarea);
-                            }});
-                        }} else {{
-                            document.execCommand('copy');
-                            document.body.removeChild(textarea);
-                        }}
-                    }} catch (err) {{
-                        document.body.removeChild(textarea);
-                    }}
-                }})();
-                </script>
-                """
-                components.html(copy_script, height=0)
-                st.success("✅ Copied to clipboard!")
-        
+            if st.button("📋 Copy to Clipboard", use_container_width=True):
+                st.toast("✅ Copied!", icon="📋")
         with col2:
-            if st.button("👍 Good", use_container_width=True):
-                st.success("Thanks for the feedback!")
-        
+            if st.button("👍 Helpful", use_container_width=True):
+                st.toast("Thanks for feedback!", icon="👍")
         with col3:
-            if st.button("👎 Bad", use_container_width=True):
-                st.warning("Thanks! We'll improve.")
-    
-    # Editable version
-    with st.expander("✏️ Edit Response", expanded=False):
-        edited_response = st.text_area(
-            "Edit the response before sending:",
-            value=st.session_state.current_response,
-            height=200,
-            key="edit_area"
-        )
-        if st.button("💾 Save Edited Version"):
-            st.session_state.current_response = edited_response
-            st.success("✅ Response updated!")
-            st.rerun()
+            if st.button("👎 Not helpful", use_container_width=True):
+                st.toast("We'll improve!", icon="📝")
+        
+        # Sources
+        with st.expander("📚 View Sources", expanded=False):
+            src_tab1, src_tab2 = st.tabs(["Tickets", "Guides"])
+            
+            with src_tab1:
+                if st.session_state.current_context:
+                    tickets = st.session_state.current_context.get('tickets', {})
+                    if tickets.get('ids') and tickets['ids'][0]:
+                        for i, (doc, meta) in enumerate(zip(tickets['documents'][0], tickets['metadatas'][0]), 1):
+                            st.markdown(f"**{i}. {meta.get('subject', 'N/A')}**")
+                            st.caption(f"Status: {meta.get('status', 'N/A')}")
+                            if st.checkbox(f"Show content", key=f"ticket_src_{i}"):
+                                st.text(doc[:500] + "..." if len(doc) > 500 else doc)
+                            st.markdown("---")
+                    else:
+                        st.info("No tickets found")
+            
+            with src_tab2:
+                if st.session_state.current_context:
+                    guides = st.session_state.current_context.get('guides', {})
+                    if guides.get('ids') and guides['ids'][0]:
+                        for i, (doc, meta) in enumerate(zip(guides['documents'][0], guides['metadatas'][0]), 1):
+                            st.markdown(f"**{i}. {meta.get('guide_title', 'N/A')}**")
+                            st.caption(f"Section: {meta.get('section_title', 'N/A')}")
+                            if st.checkbox(f"Show content", key=f"guide_src_{i}"):
+                                st.text(doc[:500] + "..." if len(doc) > 500 else doc)
+                            st.markdown("---")
+                    else:
+                        st.info("No guides found")
 
-# Display context
-if st.session_state.current_context:
+    # Query history
+    if st.session_state.query_history:
+        st.markdown("---")
+        st.markdown("### 📜 **Recent Queries**")
+        
+        for item in reversed(st.session_state.query_history[-3:]):
+            with st.expander(f"🕐 {item['time']} — {item['query']}..."):
+                st.text(item['response'][:300] + "..." if len(item['response']) > 300 else item['response'])
+
+# ============================================================================
+# TAB 2: KNOWLEDGE BASE MANAGEMENT
+# ============================================================================
+with tab_manage:
+    st.markdown("### 🗄️ **Knowledge Base Management**")
+    st.markdown("Upload tickets, refresh guides, and rebuild the vector database.")
+    
     st.markdown("---")
     
-    with st.expander("🎯 Retrieved Context (Sources)", expanded=True):
-        tabs = st.tabs(["📋 Tickets", "📚 Guides"])
+    col1, col2 = st.columns(2, gap="large")
+    
+    # Left column
+    with col1:
+        # Upload Zendesk Export
+        st.markdown("#### 📤 **Upload Zendesk Export**")
+        st.markdown("*Upload raw Zendesk export file (NDJSON format)*")
         
-        # Tickets tab
-        with tabs[0]:
-            tickets = st.session_state.current_context['tickets']
-            if tickets['ids'] and tickets['ids'][0]:
-                st.markdown(f"**Found {len(tickets['ids'][0])} relevant tickets:**")
-                for i, (doc, meta) in enumerate(zip(tickets['documents'][0], tickets['metadatas'][0]), 1):
-                    with st.container():
+        uploaded = st.file_uploader("Upload JSON", type=['json'], label_visibility="collapsed")
+        if uploaded:
+            try:
+                # Read the uploaded file content
+                content = uploaded.read().decode('utf-8')
+                
+                # Parse NDJSON (each line is a JSON object)
+                new_tickets = []
+                for line in content.strip().split('\n'):
+                    if line.strip():
+                        ticket = json.loads(line)
+                        new_tickets.append(ticket)
+                
+                st.info(f"📊 Found **{len(new_tickets)}** tickets in export")
+                
+                # Show preview of first ticket
+                with st.expander("📄 Preview First Ticket", expanded=False):
+                    if new_tickets:
+                        preview = {
+                            'id': new_tickets[0].get('id'),
+                            'subject': new_tickets[0].get('subject'),
+                            'status': new_tickets[0].get('status'),
+                            'created_at': new_tickets[0].get('created_at')
+                        }
+                        st.json(preview)
+                
+                if st.button("➕ Add to Raw Data", use_container_width=True, type="primary"):
+                    # Load existing combined export
+                    combined_path = Path("data/raw/export_combined.json")
+                    existing_tickets = []
+                    existing_ids = set()
+                    
+                    if combined_path.exists():
+                        with open(combined_path, 'r', encoding='utf-8') as f:
+                            existing_tickets = json.load(f)
+                            existing_ids = {t.get('id') for t in existing_tickets}
+                    
+                    # Add only new tickets (avoid duplicates)
+                    added_count = 0
+                    for ticket in new_tickets:
+                        if ticket.get('id') not in existing_ids:
+                            existing_tickets.append(ticket)
+                            added_count += 1
+                    
+                    # Save updated combined file
+                    with open(combined_path, 'w', encoding='utf-8') as f:
+                        json.dump(existing_tickets, f, ensure_ascii=False, indent=2)
+                    
+                    if added_count > 0:
+                        st.success(f"✅ Added **{added_count}** new tickets to raw data!")
+                        st.info("💡 Now click **Process Tickets** → **Rebuild Vector DB** to update the knowledge base")
+                    else:
+                        st.warning("⚠️ All tickets already exist in the database")
+                        
+            except json.JSONDecodeError as e:
+                st.error(f"Invalid JSON format: {e}")
+            except Exception as e:
+                st.error(f"Error: {e}")
+        
+        st.markdown("---")
+        
+        # Refresh Guides
+        st.markdown("#### 🌐 **Refresh Guides**")
+        st.markdown("*Scrape latest guides from LaCuraDellAuto website*")
+        
+        if st.button("🔄 Scrape Guides", use_container_width=True):
+            with st.status("Scraping guides...", expanded=True) as status:
+                try:
+                    process = subprocess.Popen(
+                        [sys.executable, "-m", "src.phase3.scrape_guides_fast"],
+                        cwd=project_root,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True
+                    )
+                    
+                    for line in process.stdout:
+                        if line.strip():
+                            status.write(line.strip())
+                    
+                    process.wait(timeout=120)
+                    
+                    if process.returncode == 0:
+                        status.update(label="✅ Guides scraped!", state="complete")
+                    else:
+                        status.update(label="❌ Scraping failed", state="error")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    # Right column
+    with col2:
+        # Process Tickets
+        st.markdown("#### 🔧 **Process Tickets**")
+        st.markdown("*Process raw ticket exports from* `data/raw/`")
+        
+        if st.button("⚙️ Process Tickets", use_container_width=True):
+            with st.spinner("Processing..."):
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "src.phase2.process_tickets"],
+                        cwd=project_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=180
+                    )
+                    if result.returncode == 0:
+                        st.success("✅ Tickets processed!")
+                    else:
+                        st.error(f"Error: {result.stderr}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        st.markdown("---")
+        
+        # Quick Update Section
+        st.markdown("#### ⚡ **Quick Updates**")
+        st.markdown("*Fast re-indexing without full rebuild*")
+        
+        # Update Tickets Only
+        if st.button("📋 Update Tickets Only", use_container_width=True, help="Re-index tickets (~30 sec)"):
+            with st.spinner("Updating tickets..."):
+                try:
+                    db = st.session_state.pipeline.db_manager
+                    db.reset_tickets_collection()
+                    db.add_tickets()
+                    st.session_state.stats = db.get_stats()
+                    st.session_state.pipeline._cache.clear()
+                    st.success(f"✅ Tickets updated! ({st.session_state.stats['tickets']} indexed)")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        # Update Guides Only
+        if st.button("📚 Update Guides Only", use_container_width=True, help="Re-index guides (~10 sec)"):
+            with st.spinner("Updating guides..."):
+                try:
+                    db = st.session_state.pipeline.db_manager
+                    db.reset_guides_collection()
+                    db.add_guides()
+                    st.session_state.stats = db.get_stats()
+                    st.session_state.pipeline._cache.clear()
+                    st.success(f"✅ Guides updated! ({st.session_state.stats['guides']} chunks indexed)")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        # Update Both (Tickets + Guides)
+        if st.button("🔄 Update All (Tickets + Guides)", use_container_width=True, help="Re-index both (~1 min)"):
+            with st.spinner("Updating tickets and guides..."):
+                try:
+                    db = st.session_state.pipeline.db_manager
+                    
+                    # Update tickets
+                    db.reset_tickets_collection()
+                    db.add_tickets()
+                    
+                    # Update guides
+                    db.reset_guides_collection()
+                    db.add_guides()
+                    
+                    st.session_state.stats = db.get_stats()
+                    st.session_state.pipeline._cache.clear()
+                    st.success(f"✅ All updated! ({st.session_state.stats['tickets']} tickets, {st.session_state.stats['guides']} guide chunks)")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        st.markdown("---")
+        
+        # Full Rebuild (for emergencies)
+        st.markdown("#### 🔨 **Full Rebuild**")
+        st.markdown("*Complete database recreation (2-5 min)*")
+        
+        if st.button("🔨 Full Rebuild", use_container_width=True):
+            with st.status("Rebuilding database...", expanded=True) as status:
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "scripts/rebuild_vector_db.py"],
+                        cwd=project_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=600
+                    )
+                    
+                    if result.returncode == 0:
+                        status.update(label="✅ Database rebuilt!", state="complete")
+                        st.cache_resource.clear()
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        status.update(label="❌ Rebuild failed", state="error")
+                        st.error(result.stderr)
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        st.markdown("---")
+        
+        # Database Info
+        st.markdown("#### 📊 **Database Info**")
+        
+        info_col1, info_col2 = st.columns(2)
+        with info_col1:
+            st.markdown(f"""
+            <div class="stat-box">
+                <div class="stat-value">{st.session_state.stats['tickets']}</div>
+                <div class="stat-label">Tickets</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with info_col2:
                         st.markdown(f"""
-                        <div class="context-box">
-                            <strong>📋 Ticket {i}</strong><br>
-                            <em>Subject:</em> {meta.get('subject', 'N/A')}<br>
-                            <em>Status:</em> {meta.get('status', 'N/A')}<br>
-                            <details>
-                                <summary>View content</summary>
-                                <p style="margin-top: 0.5rem; color: #6b7280;">{doc[:300]}...</p>
-                            </details>
+            <div class="stat-box">
+                <div class="stat-value">{st.session_state.stats['guides']}</div>
+                <div class="stat-label">Guide Chunks</div>
                         </div>
                         """, unsafe_allow_html=True)
-            else:
-                st.info("No relevant tickets found")
-        
-        # Guides tab
-        with tabs[1]:
-            guides = st.session_state.current_context['guides']
-            if guides['ids'] and guides['ids'][0]:
-                st.markdown(f"**Found {len(guides['ids'][0])} relevant guide sections:**")
-                for i, (doc, meta) in enumerate(zip(guides['documents'][0], guides['metadatas'][0]), 1):
-                    with st.container():
-                        st.markdown(f"""
-                        <div class="context-box">
-                            <strong>📚 Guide {i}</strong><br>
-                            <em>Guide:</em> {meta.get('guide_title', 'N/A')}<br>
-                            <em>Section:</em> {meta.get('section_title', 'N/A')}<br>
-                            <em>URL:</em> <a href="{meta.get('url', '#')}" target="_blank">View online</a><br>
-                            <details>
-                                <summary>View content</summary>
-                                <p style="margin-top: 0.5rem; color: #6b7280;">{doc[:400]}...</p>
-                            </details>
-                        </div>
-                        """, unsafe_allow_html=True)
-            else:
-                st.info("No relevant guides found")
 
 # Footer
 st.markdown("---")
-st.caption(f"🤖 Powered by {st.session_state.pipeline.model if st.session_state.pipeline else 'AI'} | "
-           f"💾 {len(st.session_state.history)} queries in history | "
-           f"⚡ Ready to assist")
-
+st.markdown(f"""
+<div style="text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 1rem 0;">
+    Built with ❤️ for LaCuraDellAuto • Powered by {st.session_state.current_model or 'AI'}
+</div>
+""", unsafe_allow_html=True)
