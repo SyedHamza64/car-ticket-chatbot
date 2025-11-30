@@ -55,6 +55,9 @@ if is_dark:
         --error: #f87171;
         --input-bg: #12121a;
         --input-text: #ffffff;
+        --response-bg: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+        --response-border: #4338ca;
+        --response-text: #e0e7ff;
     }
     """
 else:
@@ -77,6 +80,9 @@ else:
         --error: #f87171;
         --input-bg: #ffffff;
         --input-text: #1e293b;
+        --response-bg: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        --response-border: #7dd3fc;
+        --response-text: #0c4a6e;
     }
     """
 
@@ -210,15 +216,15 @@ st.markdown("""
     
     /* Response area */
     .response-box {
-        background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
-        border: 1px solid #4338ca;
+        background: var(--response-bg);
+        border: 1px solid var(--response-border);
         border-radius: 12px;
         padding: 1.5rem;
         margin: 1rem 0;
     }
     
     .response-text {
-        color: #e0e7ff;
+        color: var(--response-text);
         font-size: 1rem;
         line-height: 1.8;
         white-space: pre-wrap;
