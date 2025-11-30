@@ -27,11 +27,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Modern CSS - Dark theme with accent colors
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-    
+# Theme toggle in session state
+if 'dark_mode' not in st.session_state:
+    st.session_state.dark_mode = True
+
+# Get current theme
+is_dark = st.session_state.dark_mode
+
+# Dynamic CSS variables based on theme
+if is_dark:
+    css_vars = """
     :root {
         --bg-primary: #0a0a0f;
         --bg-secondary: #12121a;
@@ -48,7 +53,39 @@ st.markdown("""
         --success: #34d399;
         --warning: #fbbf24;
         --error: #f87171;
+        --input-bg: #12121a;
+        --input-text: #ffffff;
     }
+    """
+else:
+    css_vars = """
+    :root {
+        --bg-primary: #f8fafc;
+        --bg-secondary: #f1f5f9;
+        --bg-card: #ffffff;
+        --bg-hover: #e2e8f0;
+        --accent: #6366f1;
+        --accent-light: #4f46e5;
+        --accent-glow: rgba(99, 102, 241, 0.3);
+        --text-primary: #1e293b;
+        --text-secondary: #475569;
+        --text-muted: #64748b;
+        --text-heading: #4f46e5;
+        --border: #e2e8f0;
+        --success: #34d399;
+        --warning: #fbbf24;
+        --error: #f87171;
+        --input-bg: #ffffff;
+        --input-text: #1e293b;
+    }
+    """
+
+# Modern CSS - Dynamic theme with accent colors
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    
+    """ + css_vars + """
     
     * {
         font-family: 'Space Grotesk', -apple-system, sans-serif;
@@ -473,6 +510,31 @@ st.markdown("""
         color: #818cf8;
         border: 1px solid rgba(99, 102, 241, 0.3);
     }
+    
+    /* Theme toggle button */
+    .theme-toggle {
+        position: fixed;
+        top: 70px;
+        right: 20px;
+        z-index: 9999;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        width: 45px;
+        height: 45px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        font-size: 1.25rem;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        transition: all 0.3s ease;
+    }
+    
+    .theme-toggle:hover {
+        transform: scale(1.1);
+        box-shadow: 0 4px 20px var(--accent-glow);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -485,6 +547,7 @@ if 'initialized' not in st.session_state:
     st.session_state.query_history = []
     st.session_state.current_response = None
     st.session_state.current_context = None
+    st.session_state.dark_mode = True  # Default to dark mode
 
 # Initialize RAG Pipeline (cached)
 @st.cache_resource
@@ -516,6 +579,17 @@ except:
 # ============================================================================
 with st.sidebar:
     st.markdown("## ⚙️ **Settings**")
+    
+    # Theme Toggle
+    theme_col1, theme_col2 = st.columns([3, 1])
+    with theme_col1:
+        st.markdown("**🎨 Theme**")
+    with theme_col2:
+        if st.button("🌙" if st.session_state.dark_mode else "☀️", key="theme_toggle", help="Toggle Light/Dark Mode"):
+            st.session_state.dark_mode = not st.session_state.dark_mode
+            st.rerun()
+    
+    st.markdown("---")
     
     # Model Selection
     selected_model = st.selectbox(
