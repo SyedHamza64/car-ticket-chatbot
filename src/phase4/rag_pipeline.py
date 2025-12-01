@@ -1,13 +1,17 @@
 """RAG Pipeline Orchestrator - Combines retrieval with LLM generation."""
 import json
 import hashlib
+import requests
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 # Removed ThreadPoolExecutor - using sequential generation for better GPU efficiency
 import ollama
 from src.phase4.vector_db import VectorDBManager
 from src.utils.logger import setup_logger
-from config.settings import OLLAMA_MODEL, OLLAMA_BASE_URL
+from config.settings import (
+    OLLAMA_MODEL, OLLAMA_BASE_URL,
+    GROQ_API_KEY, GROQ_MODEL, GROQ_BASE_URL
+)
 
 logger = setup_logger(__name__)
 
@@ -16,23 +20,35 @@ class RAGPipeline:
     """RAG Pipeline for intelligent customer support responses."""
     
     def __init__(self, db_manager: Optional[VectorDBManager] = None, 
-                 model: str = None, base_url: str = None):
+                 model: str = None, base_url: str = None, provider: str = "ollama"):
         """Initialize RAG Pipeline.
         
         Args:
             db_manager: Vector database manager instance
-            model: Ollama model name (default from config)
-            base_url: Ollama base URL (default from config)
+            model: Model name (default from config based on provider)
+            base_url: Base URL (default from config based on provider)
+            provider: LLM provider - "ollama" or "grok" (default: "ollama")
         """
         self.db_manager = db_manager or VectorDBManager()
-        self.model = model or OLLAMA_MODEL
-        self.base_url = base_url or OLLAMA_BASE_URL
+        self.provider = provider.lower()
+        
+        # Set model and base_url based on provider
+        if self.provider == "grok":
+            self.model = model or GROQ_MODEL
+            self.base_url = base_url or GROQ_BASE_URL
+            self.api_key = GROQ_API_KEY
+            if not self.api_key:
+                raise ValueError("GROQ_API_KEY not found in environment variables")
+        else:  # ollama (default)
+            self.model = model or OLLAMA_MODEL
+            self.base_url = base_url or OLLAMA_BASE_URL
+            self.api_key = None
         
         # Response cache (simple in-memory cache)
         self._cache = {}
         self._cache_ttl = timedelta(hours=24)  # Cache for 24 hours
         
-        logger.info(f"RAG Pipeline initialized with model: {self.model}")
+        logger.info(f"RAG Pipeline initialized with provider: {self.provider}, model: {self.model}")
         
         # Initialize collections if not already done
         if not self.db_manager.tickets_collection or not self.db_manager.guides_collection:
@@ -212,8 +228,133 @@ Infine, asciuga l'auto con un panno in microfibra assorbente per evitare aloni. 
         
         return prompt
     
+    def _generate_with_ollama(self, prompt: str, stream: bool = False, temperature: float = 0.7) -> str:
+        """Generate response using Ollama LLM.
+        
+        Args:
+            prompt: Complete prompt with context
+            stream: Whether to stream the response
+            temperature: Creativity level (0.0-1.0)
+            
+        Returns:
+            Generated response text
+        """
+        response = ollama.generate(
+            model=self.model,
+            prompt=prompt,
+            stream=stream,
+            options={
+                'temperature': temperature,
+                'top_p': 0.9,
+                'top_k': 40,
+                'num_predict': 250,
+                'repeat_penalty': 1.1,
+                'num_ctx': 1024,
+                'num_thread': 4,
+            }
+        )
+        
+        if stream:
+            full_response = ""
+            for chunk in response:
+                if 'response' in chunk:
+                    full_response += chunk['response']
+            return full_response
+        else:
+            return response['response']
+    
+    def _generate_with_grok(self, prompt: str, stream: bool = False, temperature: float = 0.7) -> str:
+        """Generate response using Groq API (Fast LLM Inference).
+        
+        Args:
+            prompt: Complete prompt with context
+            stream: Whether to stream the response (not fully supported yet)
+            temperature: Creativity level (0.0-1.0)
+            
+        Returns:
+            Generated response text
+        """
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Groq API format (OpenAI-compatible) - ensure temperature is within valid range
+        temperature = max(0.0, min(2.0, temperature))  # Groq allows 0-2 range
+        
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "temperature": temperature,
+            "max_tokens": 2000,  # Increased for better responses
+            "stream": False  # Disable streaming for now to avoid issues
+        }
+        
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=120)
+            
+            # Better error handling with detailed messages
+            if response.status_code != 200:
+                error_detail = response.text
+                logger.error(f"Grok API error {response.status_code}: {error_detail}")
+                try:
+                    error_json = response.json()
+                    error_info = error_json.get('error', {})
+                    error_msg = error_info.get('message', error_detail)
+                    error_type = error_info.get('type', 'unknown')
+                    
+                    # Provide helpful error messages
+                    if response.status_code == 400:
+                        if 'incorrect api key' in error_msg.lower() or 'invalid api key' in error_msg.lower():
+                            raise Exception(f"❌ Invalid API Key: Your Groq API key appears to be invalid, expired, or revoked.\n\n"
+                                         f"Please:\n"
+                                         f"1. Go to https://console.groq.com/keys and check your API keys\n"
+                                         f"2. Generate a new API key if needed\n"
+                                         f"3. Update GROQ_API_KEY in your .env file\n"
+                                         f"4. Restart the application\n\n"
+                                         f"Error details: {error_msg}")
+                        elif 'model' in error_msg.lower() or 'invalid' in error_msg.lower():
+                            raise Exception(f"Invalid model '{self.model}'. Try 'llama-3.3-70b-versatile' or 'llama-3.1-8b-instant'. Error: {error_msg}")
+                        else:
+                            raise Exception(f"Bad request: {error_msg}. Check your API key and model name.")
+                    elif response.status_code == 401:
+                        raise Exception(f"❌ Authentication failed: Your API key was rejected.\n\n"
+                                      f"Please verify your GROQ_API_KEY in .env file and ensure it's valid at https://console.groq.com/keys")
+                    else:
+                        raise Exception(f"Grok API error ({response.status_code}): {error_msg}")
+                except Exception as e:
+                    # Re-raise if it's already our custom exception
+                    if "Invalid model" in str(e) or "Authentication" in str(e) or "Bad request" in str(e):
+                        raise
+                    # Otherwise, create a generic error
+                    raise Exception(f"Grok API error {response.status_code}: {error_detail[:200]}")
+            
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract response from xAI format
+            if 'choices' in data and len(data['choices']) > 0:
+                content = data['choices'][0].get('message', {}).get('content', '')
+                if not content:
+                    # Fallback: try different response formats
+                    content = data.get('choices', [{}])[0].get('text', '')
+                return content
+            else:
+                logger.error(f"Unexpected Grok API response format: {data}")
+                raise Exception("Unexpected response format from Grok API")
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Grok API request failed: {e}")
+            raise Exception(f"Failed to connect to Grok API: {str(e)}")
+    
     def generate_response(self, prompt: str, stream: bool = False, temperature: float = 0.7) -> str:
-        """Generate response using Ollama LLM with optimized parameters.
+        """Generate response using the configured LLM provider.
         
         Args:
             prompt: Complete prompt with context
@@ -223,33 +364,13 @@ Infine, asciuga l'auto con un panno in microfibra assorbente per evitare aloni. 
         Returns:
             Generated response text
         """
-        logger.info(f"Generating response with {self.model} (temp={temperature})")
+        logger.info(f"Generating response with {self.provider}/{self.model} (temp={temperature})")
         
         try:
-            response = ollama.generate(
-                model=self.model,
-                prompt=prompt,
-                stream=stream,
-                options={
-                    'temperature': temperature,   # Configurable creativity
-                    'top_p': 0.9,                 # Nucleus sampling
-                    'top_k': 40,                  # Reduced for faster sampling (was 50)
-                    'num_predict': 250,           # Optimized based on diagnostics (was 500)
-                    'repeat_penalty': 1.1,        # Avoid repetition
-                    'num_ctx': 1024,              # Optimized context window (was 1536)
-                    'num_thread': 4,              # Use more CPU threads if GPU is busy
-                }
-            )
-            
-            if stream:
-                # Handle streaming response
-                full_response = ""
-                for chunk in response:
-                    if 'response' in chunk:
-                        full_response += chunk['response']
-                return full_response
-            else:
-                return response['response']
+            if self.provider == "grok":
+                return self._generate_with_grok(prompt, stream, temperature)
+            else:  # ollama (default)
+                return self._generate_with_ollama(prompt, stream, temperature)
                 
         except Exception as e:
             logger.error(f"Error generating response: {e}")
@@ -366,40 +487,89 @@ Infine, asciuga l'auto con un panno in microfibra assorbente per evitare aloni. 
         
         return result
     
-    def check_ollama_status(self) -> Dict[str, Any]:
-        """Check if Ollama is running and model is available.
+    def check_provider_status(self) -> Dict[str, Any]:
+        """Check if the configured provider is available.
         
         Returns:
             Status dictionary
         """
-        try:
-            result = ollama.list()
-            
-            # Handle both old and new API format
-            if isinstance(result, dict) and 'models' in result:
-                models_list = result['models']
-            else:
-                models_list = result if isinstance(result, list) else []
-            
-            available_models = []
-            for m in models_list:
-                if isinstance(m, dict):
-                    model_name = m.get('name', m.get('model', ''))
-                    if model_name:
-                        available_models.append(model_name)
-            
-            model_available = any(self.model in m for m in available_models)
-            
-            return {
-                'ollama_running': True,
-                'model_available': model_available,
-                'available_models': available_models,
-                'requested_model': self.model
-            }
-        except Exception as e:
-            logger.error(f"Ollama status check failed: {e}")
-            return {
-                'ollama_running': False,
-                'error': str(e)
-            }
+        if self.provider == "grok":
+            try:
+                # Test API connection with a simple request
+                url = f"{self.base_url}/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                }
+                # Minimal test payload
+                test_payload = {
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": "test"}],
+                    "max_tokens": 5
+                }
+                response = requests.post(url, json=test_payload, headers=headers, timeout=10)
+                
+                if response.status_code == 200:
+                    return {
+                        'provider': 'grok',
+                        'available': True,
+                        'model': self.model,
+                        'base_url': self.base_url
+                    }
+                else:
+                    error_text = response.text
+                    try:
+                        error_json = response.json()
+                        error_msg = error_json.get('error', {}).get('message', error_text)
+                    except:
+                        error_msg = error_text
+                    return {
+                        'provider': 'grok',
+                        'available': False,
+                        'error': f"API returned {response.status_code}: {error_msg}"
+                    }
+            except Exception as e:
+                logger.error(f"Groq API status check failed: {e}")
+                return {
+                    'provider': 'grok',
+                    'available': False,
+                    'error': str(e)
+                }
+        else:  # ollama
+            try:
+                result = ollama.list()
+                
+                # Handle both old and new API format
+                if isinstance(result, dict) and 'models' in result:
+                    models_list = result['models']
+                else:
+                    models_list = result if isinstance(result, list) else []
+                
+                available_models = []
+                for m in models_list:
+                    if isinstance(m, dict):
+                        model_name = m.get('name', m.get('model', ''))
+                        if model_name:
+                            available_models.append(model_name)
+                
+                model_available = any(self.model in m for m in available_models)
+                
+                return {
+                    'provider': 'ollama',
+                    'available': True,
+                    'model_available': model_available,
+                    'available_models': available_models,
+                    'requested_model': self.model
+                }
+            except Exception as e:
+                logger.error(f"Ollama status check failed: {e}")
+                return {
+                    'provider': 'ollama',
+                    'available': False,
+                    'error': str(e)
+                }
+    
+    def check_ollama_status(self) -> Dict[str, Any]:
+        """Legacy method - redirects to check_provider_status for backward compatibility."""
+        return self.check_provider_status()
 

@@ -549,6 +549,7 @@ if 'initialized' not in st.session_state:
     st.session_state.initialized = False
     st.session_state.pipeline = None
     st.session_state.current_model = None
+    st.session_state.current_provider = None
     st.session_state.stats = {'tickets': 0, 'guides': 0}
     st.session_state.query_history = []
     st.session_state.current_response = None
@@ -557,18 +558,21 @@ if 'initialized' not in st.session_state:
 
 # Initialize RAG Pipeline (cached)
 @st.cache_resource
-def initialize_pipeline(model_name):
+def initialize_pipeline(model_name, provider="ollama"):
     """Initialize the RAG pipeline."""
     try:
         import os
-        os.environ['OLLAMA_MODEL'] = model_name
+        if provider == "ollama":
+            os.environ['OLLAMA_MODEL'] = model_name
+        else:
+            os.environ['GROK_MODEL'] = model_name
         
         for module in ['config.settings', 'src.phase4.rag_pipeline', 'src.phase4']:
             if module in sys.modules:
                 del sys.modules[module]
         
         from src.phase4.rag_pipeline import RAGPipeline
-        pipeline = RAGPipeline(model=model_name)
+        pipeline = RAGPipeline(model=model_name, provider=provider)
         return pipeline, None
     except Exception as e:
         return None, str(e)
@@ -597,13 +601,39 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Model Selection
-    selected_model = st.selectbox(
-        "🤖 **AI Model**",
-        AVAILABLE_MODELS,
+    # Provider Selection
+    provider = st.radio(
+        "🔌 **AI Provider**",
+        ["🦙 Ollama (Local)", "⚡ Groq (Cloud)"],
         index=0,
-        help="Select Ollama model"
+        help="Choose between local Ollama or cloud-based Groq API (fast inference)"
     )
+    provider_name = "ollama" if "Ollama" in provider else "grok"
+    
+    # Model Selection based on provider
+    if provider_name == "grok":
+        # Groq model names (fast inference models)
+        AVAILABLE_MODELS_GROQ = [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "groq/compound",
+            "groq/compound-mini",
+            "meta-llama/llama-4-maverick-17b-128e-instruct",
+            "qwen/qwen3-32b"
+        ]
+        selected_model = st.selectbox(
+            "⚡ **Groq Model**",
+            AVAILABLE_MODELS_GROQ,
+            index=0,
+            help="Select Groq model (fast inference)"
+        )
+    else:
+        selected_model = st.selectbox(
+            "🤖 **Ollama Model**",
+            AVAILABLE_MODELS,
+            index=0,
+            help="Select Ollama model"
+        )
     
     # Language
     st.markdown("---")
@@ -616,14 +646,15 @@ with st.sidebar:
     
     # Initialize model
     st.markdown("---")
+    provider_changed = st.session_state.get('current_provider') != provider_name
     model_changed = st.session_state.current_model != selected_model
 
-    if not st.session_state.initialized or model_changed:
-        with st.spinner(f"Loading {selected_model}..."):
-            if model_changed and st.session_state.initialized:
+    if not st.session_state.initialized or model_changed or provider_changed:
+        with st.spinner(f"Loading {provider_name}/{selected_model}..."):
+            if (model_changed or provider_changed) and st.session_state.initialized:
                 st.cache_resource.clear()
             
-            pipeline, error = initialize_pipeline(selected_model)
+            pipeline, error = initialize_pipeline(selected_model, provider=provider_name)
             if error:
                 st.error(f"❌ {error}")
                 st.stop()
@@ -631,6 +662,7 @@ with st.sidebar:
                 st.session_state.pipeline = pipeline
                 st.session_state.initialized = True
                 st.session_state.current_model = selected_model
+                st.session_state.current_provider = provider_name
                 try:
                     st.session_state.stats = pipeline.db_manager.get_stats()
                 except:
@@ -659,7 +691,8 @@ with st.sidebar:
     
     # Footer
     st.markdown("---")
-    st.caption(f"Model: `{st.session_state.current_model}`")
+    provider_display = "🦙 Ollama" if st.session_state.get('current_provider', 'ollama') == 'ollama' else "🤖 Grok"
+    st.caption(f"Provider: {provider_display} | Model: `{st.session_state.current_model}`")
 
 # ============================================================================
 # MAIN CONTENT
@@ -1042,8 +1075,10 @@ with tab_manage:
 
 # Footer
 st.markdown("---")
+provider_name = st.session_state.get('current_provider', 'ollama')
+provider_label = "Ollama" if provider_name == "ollama" else "Groq"
 st.markdown(f"""
 <div style="text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 1rem 0;">
-    Built with ❤️ for LaCuraDellAuto • Powered by {st.session_state.current_model or 'AI'}
+    Built with ❤️ for LaCuraDellAuto • Powered by {provider_label} ({st.session_state.current_model or 'AI'})
 </div>
 """, unsafe_allow_html=True)

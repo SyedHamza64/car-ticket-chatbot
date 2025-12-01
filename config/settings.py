@@ -23,6 +23,11 @@ for dir_path in [DATA_DIR, RAW_DATA_DIR, PROCESSED_DATA_DIR, GUIDES_DATA_DIR, LO
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma2:2b")
 
+# Groq API settings (Fast LLM Inference)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()  # Strip whitespace
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")  # Default Groq model
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+
 # Embedding model (upgraded to all-mpnet-base-v2 for better retrieval quality)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-mpnet-base-v2")
 
