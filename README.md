@@ -22,8 +22,8 @@ chat-bot-ticket/
 │   └── settings.py        # Configuration settings
 ├── src/
 │   ├── phase4/
-│   │   ├── vector_db.py            # ChromaDB vector database
-│   │   └── rag_pipeline.py         # RAG orchestration
+│   │   ├── vector_db.py            # ChromaDB utility (for update scripts)
+│   │   └── rag_pipeline_langchain.py  # LangChain RAG pipeline
 │   └── utils/
 │       ├── logger.py               # Logging utilities
 │       └── model_checker.py        # Model validation

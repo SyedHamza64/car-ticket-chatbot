@@ -15,8 +15,8 @@ import subprocess
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from src.phase4.rag_pipeline import RAGPipeline
-from src.phase4.vector_db import VectorDBManager
+# LangChain RAG pipeline
+from src.phase4.rag_pipeline_langchain import LangchainRAG
 from src.utils.model_checker import get_available_models
 
 # Page configuration
@@ -227,7 +227,29 @@ st.markdown("""
         color: var(--response-text);
         font-size: 1rem;
         line-height: 1.8;
-        white-space: pre-wrap;
+    }
+    
+    /* Links in response box - style Streamlit markdown links */
+    .response-box a,
+    .response-box .stMarkdown a,
+    div[data-testid="stMarkdownContainer"] a {
+        color: var(--accent-light) !important;
+        text-decoration: underline !important;
+        font-weight: 500 !important;
+    }
+    
+    .response-box a:hover,
+    .response-box .stMarkdown a:hover,
+    div[data-testid="stMarkdownContainer"] a:hover {
+        color: var(--accent) !important;
+        text-decoration: underline !important;
+    }
+    
+    /* Ensure markdown content inside response box has correct text color */
+    .response-box .stMarkdown,
+    .response-box .stMarkdown p,
+    .response-box .stMarkdown li {
+        color: var(--response-text) !important;
     }
     
     /* ALL Buttons - Force dark theme */
@@ -563,16 +585,19 @@ def initialize_pipeline(model_name, provider="ollama"):
     try:
         import os
         if provider == "ollama":
-            os.environ['OLLAMA_MODEL'] = model_name
-        else:
-            os.environ['GROK_MODEL'] = model_name
+            os.environ["OLLAMA_MODEL"] = model_name
+        elif provider == "grok":
+            os.environ["GROQ_MODEL"] = model_name
+        elif provider == "gemini":
+            os.environ["GEMINI_MODEL"] = model_name
         
-        for module in ['config.settings', 'src.phase4.rag_pipeline', 'src.phase4']:
+        for module in ['config.settings', 'src.phase4.rag_pipeline_langchain', 'src.phase4']:
             if module in sys.modules:
                 del sys.modules[module]
         
-        from src.phase4.rag_pipeline import RAGPipeline
-        pipeline = RAGPipeline(model=model_name, provider=provider)
+        from src.phase4.rag_pipeline_langchain import LangchainRAG
+        pipeline = LangchainRAG(provider=provider, model=model_name)
+
         return pipeline, None
     except Exception as e:
         return None, str(e)
@@ -604,11 +629,16 @@ with st.sidebar:
     # Provider Selection
     provider = st.radio(
         "🔌 **AI Provider**",
-        ["🦙 Ollama (Local)", "⚡ Groq (Cloud)"],
+        ["🦙 Ollama (Local)", "⚡ Groq (Cloud)", "✨ Gemini (Google AI)"],
         index=0,
-        help="Choose between local Ollama or cloud-based Groq API (fast inference)"
+        help="Choose between local Ollama, Groq Cloud, or Google Gemini"
     )
-    provider_name = "ollama" if "Ollama" in provider else "grok"
+    if "Ollama" in provider:
+        provider_name = "ollama"
+    elif "Groq" in provider:
+        provider_name = "grok"
+    else:
+        provider_name = "gemini"
     
     # Model Selection based on provider
     if provider_name == "grok":
@@ -619,13 +649,28 @@ with st.sidebar:
             "groq/compound",
             "groq/compound-mini",
             "meta-llama/llama-4-maverick-17b-128e-instruct",
-            "qwen/qwen3-32b"
+            "qwen/qwen3-32b",
         ]
         selected_model = st.selectbox(
             "⚡ **Groq Model**",
             AVAILABLE_MODELS_GROQ,
             index=0,
             help="Select Groq model (fast inference)"
+        )
+    elif provider_name == "gemini":
+        # Gemini model ids (Google AI Studio)
+        # Use full ids compatible with v1 generateContent (from ListModels)
+        AVAILABLE_MODELS_GEMINI = [
+            "models/gemini-2.5-flash",
+            "models/gemini-1.5-flash",
+            "models/gemini-1.5-pro",
+            "models/gemini-2.0-flash-exp",
+        ]
+        selected_model = st.selectbox(
+            "✨ **Gemini Model**",
+            AVAILABLE_MODELS_GEMINI,
+            index=0,
+            help="Select Gemini model (Google AI Studio)"
         )
     else:
         selected_model = st.selectbox(
@@ -664,8 +709,9 @@ with st.sidebar:
                 st.session_state.current_model = selected_model
                 st.session_state.current_provider = provider_name
                 try:
-                    st.session_state.stats = pipeline.db_manager.get_stats()
-                except:
+                    st.session_state.stats = pipeline.get_stats()
+                except Exception as e:
+                    st.error(f"Error getting stats: {e}")
                     st.session_state.stats = {'tickets': 0, 'guides': 0}
 
     # Stats
@@ -691,7 +737,12 @@ with st.sidebar:
     
     # Footer
     st.markdown("---")
-    provider_display = "🦙 Ollama" if st.session_state.get('current_provider', 'ollama') == 'ollama' else "🤖 Grok"
+    provider_icons = {
+        'ollama': '🦙 Ollama',
+        'grok': '⚡ Groq',
+        'gemini': '✨ Gemini'
+    }
+    provider_display = provider_icons.get(st.session_state.get('current_provider', 'ollama'), '🤖 Unknown')
     st.caption(f"Provider: {provider_display} | Model: `{st.session_state.current_model}`")
 
 # ============================================================================
@@ -739,25 +790,25 @@ with tab_query:
         with st.spinner("🤔 Thinking..."):
             try:
                 start_time = time.time()
-                result = st.session_state.pipeline.query(
+                result = st.session_state.pipeline.answer(
                     query,
-                    n_tickets=n_tickets,
-                    n_guides=n_guides,
-                    num_drafts=num_drafts,
-                    language=language_code
+                    top_k_tickets=n_tickets,
+                    top_k_guides=n_guides,
                 )
                 elapsed = time.time() - start_time
                 
-                st.session_state.current_response = result['response']
-                st.session_state.current_responses = result.get('responses', None)
-                st.session_state.num_drafts = result.get('num_drafts', 1)
-                st.session_state.current_context = result['context']
+                # Map answer() response to expected format
+                st.session_state.current_response = result['answer']  # answer() returns 'answer', not 'response'
+                st.session_state.current_responses = None  # answer() doesn't support multiple drafts
+                st.session_state.num_drafts = 1  # Single response only
+                st.session_state.current_context = result['context']  # Formatted context string
+                st.session_state.current_sources = result['sources']  # Store sources separately for display
                 st.session_state.response_time = elapsed
                 
                 st.session_state.query_history.append({
                     'time': datetime.now().strftime("%H:%M"),
                     'query': query[:50],
-                    'response': result['response']
+                    'response': result['answer']  # answer() returns 'answer', not 'response'
                 })
                 
             except Exception as e:
@@ -785,10 +836,14 @@ with tab_query:
                     </div>
                     """, unsafe_allow_html=True)
         else:
-            # Single response
-            st.markdown(f"""
+            # Single response - render markdown with proper link support
+            # Use Streamlit's markdown renderer which handles links automatically
+            st.markdown("""
             <div class="response-box">
-                <div class="response-text">{st.session_state.current_response}</div>
+            """, unsafe_allow_html=True)
+            # Render markdown - this will make [text](url) links clickable
+            st.markdown(st.session_state.current_response)
+            st.markdown("""
             </div>
             """, unsafe_allow_html=True)
         
@@ -808,31 +863,146 @@ with tab_query:
         with st.expander("📚 View Sources", expanded=False):
             src_tab1, src_tab2 = st.tabs(["Tickets", "Guides"])
             
+            # Tickets source view
             with src_tab1:
-                if st.session_state.current_context:
-                    tickets = st.session_state.current_context.get('tickets', {})
+                if st.session_state.get('current_sources'):
+                    tickets = st.session_state.current_sources.get('tickets', {})
                     if tickets.get('ids') and tickets['ids'][0]:
-                        for i, (doc, meta) in enumerate(zip(tickets['documents'][0], tickets['metadatas'][0]), 1):
-                            st.markdown(f"**{i}. {meta.get('subject', 'N/A')}**")
-                            st.caption(f"Status: {meta.get('status', 'N/A')}")
-                            if st.checkbox(f"Show content", key=f"ticket_src_{i}"):
-                                st.text(doc[:500] + "..." if len(doc) > 500 else doc)
+                        docs = tickets.get('documents', [[]])[0] or []
+                        metas = tickets.get('metadatas', [[]])[0] or []
+                        dists = tickets.get('distances', [[]])[0] or []
+                        
+                        for i, (doc, meta) in enumerate(zip(docs, metas), 1):
+                            subject = meta.get('subject', 'N/A')
+                            status = meta.get('status', 'N/A')
+                            ticket_id = meta.get('ticket_id') or meta.get('orig_ticket_id', 'N/A')  # Check both fields
+                            priority = meta.get('priority', 'N/A')
+                            created_at = meta.get('created_at', 'N/A')
+                            
+                            # Relevance badge based on distance (lower distance = higher relevance)
+                            relevance_badge = ""
+                            try:
+                                dist = float(dists[i-1]) if len(dists) >= i else None
+                            except Exception:
+                                dist = None
+                            
+                            if dist is not None:
+                                if dist <= 0.25:
+                                    relevance_badge = "🟢 **High relevance**"
+                                elif dist <= 0.5:
+                                    relevance_badge = "🟡 **Medium relevance**"
+                                else:
+                                    relevance_badge = "🔴 **Low relevance**"
+                            
+                            st.markdown(f"**{i}. {subject}**")
+                            caption_line = f"Status: {status} • Ticket ID: {ticket_id}"
+                            if relevance_badge:
+                                caption_line += f" • {relevance_badge}"
+                            st.caption(caption_line)
+                            
+                            if st.checkbox("Show details", key=f"ticket_src_{i}"):
+                                # Structured metadata
+                                st.markdown(f"- **Ticket ID**: `{ticket_id}`")
+                                st.markdown(f"- **Status**: `{status}`")
+                                if priority and priority != 'N/A':
+                                    st.markdown(f"- **Priority**: `{priority}`")
+                                if created_at and created_at != 'N/A':
+                                    st.markdown(f"- **Created at**: `{created_at}`")
+                                
+                                # Parse searchable_text into subject, description, conversation
+                                from html import unescape
+                                subject_text = ""
+                                description_text = ""
+                                messages = []
+                                for line in (doc or "").splitlines():
+                                    raw = line.strip()
+                                    if not raw:
+                                        continue
+                                    if raw.startswith("Subject:"):
+                                        subject_text = raw[len("Subject:"):].strip()
+                                    elif raw.startswith("Description:"):
+                                        description_text = raw[len("Description:"):].strip()
+                                    elif ": " in raw:
+                                        author, msg = raw.split(": ", 1)
+                                        messages.append((author.strip(), unescape(msg.strip())))
+                                
+                                st.markdown("---")
+                                if subject_text:
+                                    st.markdown(f"**Subject**: {subject_text}")
+                                if description_text:
+                                    st.markdown(f"**Description**: {description_text}")
+                                
+                                if messages:
+                                    st.markdown("**Conversation:**")
+                                    for author, msg in messages:
+                                        # Show a reasonable preview per message
+                                        preview = msg if len(msg) <= 500 else msg[:500] + " [...]"
+                                        st.markdown(f"- **{author}**: {preview}")
+                                
+                                # Optional raw view (use checkbox instead of nested expander)
+                                if st.checkbox("Show raw searchable text", key=f"ticket_raw_{i}"):
+                                    st.text(doc if len(doc) <= 2000 else doc[:2000] + "\n...\n[truncated]")
+                            
                             st.markdown("---")
                     else:
                         st.info("No tickets found")
+                else:
+                    st.info("No tickets found")
             
+            # Guides source view
             with src_tab2:
-                if st.session_state.current_context:
-                    guides = st.session_state.current_context.get('guides', {})
+                if st.session_state.get('current_sources'):
+                    guides = st.session_state.current_sources.get('guides', {})
                     if guides.get('ids') and guides['ids'][0]:
-                        for i, (doc, meta) in enumerate(zip(guides['documents'][0], guides['metadatas'][0]), 1):
-                            st.markdown(f"**{i}. {meta.get('guide_title', 'N/A')}**")
-                            st.caption(f"Section: {meta.get('section_title', 'N/A')}")
-                            if st.checkbox(f"Show content", key=f"guide_src_{i}"):
-                                st.text(doc[:500] + "..." if len(doc) > 500 else doc)
+                        docs = guides.get('documents', [[]])[0] or []
+                        metas = guides.get('metadatas', [[]])[0] or []
+                        dists = guides.get('distances', [[]])[0] or []
+                        
+                        for i, (doc, meta) in enumerate(zip(docs, metas), 1):
+                            guide_title = meta.get('guide_title', 'N/A')
+                            section_title = meta.get('section_title', 'N/A')
+                            guide_url = meta.get('url', '')
+                            guide_number = meta.get('guide_number', '')
+                            
+                            # Relevance badge based on distance
+                            relevance_badge = ""
+                            try:
+                                dist = float(dists[i-1]) if len(dists) >= i else None
+                            except Exception:
+                                dist = None
+                            
+                            if dist is not None:
+                                if dist <= 0.25:
+                                    relevance_badge = "🟢 **High relevance**"
+                                elif dist <= 0.5:
+                                    relevance_badge = "🟡 **Medium relevance**"
+                                else:
+                                    relevance_badge = "🔴 **Low relevance**"
+                            
+                            # Display guide title with link if available
+                            if guide_url and guide_url != 'N/A' and guide_url.strip():
+                                st.markdown(f"**{i}. [{guide_title}]({guide_url})** 🔗")
+                            else:
+                                st.markdown(f"**{i}. {guide_title}**")
+                            
+                            caption_parts = []
+                            if guide_number and guide_number != 'N/A':
+                                caption_parts.append(f"Guide: {guide_number}")
+                            if section_title and section_title != 'N/A':
+                                caption_parts.append(f"Section: {section_title}")
+                            if relevance_badge:
+                                caption_parts.append(relevance_badge)
+                            if caption_parts:
+                                st.caption(" • ".join(caption_parts))
+                            
+                            if st.checkbox("Show content", key=f"guide_src_{i}"):
+                                st.text(doc if len(doc) <= 2000 else doc[:2000] + "\n...\n[truncated]")
+                            
                             st.markdown("---")
                     else:
                         st.info("No guides found")
+                else:
+                    st.info("No guides found")
 
     # Query history
     if st.session_state.query_history:
@@ -842,6 +1012,35 @@ with tab_query:
         for item in reversed(st.session_state.query_history[-3:]):
             with st.expander(f"🕐 {item['time']} — {item['query']}..."):
                 st.text(item['response'][:300] + "..." if len(item['response']) > 300 else item['response'])
+
+# ============================================================================
+# HELPER FUNCTION: Run incremental update scripts
+# ============================================================================
+def run_fast_update(script):
+    """Run an incremental update script and stream output to Streamlit."""
+    with st.status(f"Running `{script}`...", expanded=True) as status:
+        process = subprocess.Popen(
+            [sys.executable, script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=project_root
+        )
+
+        for line in process.stdout:
+            status.write(line.strip())
+
+        process.wait()
+
+        if process.returncode == 0:
+            status.update(label="Completed!", state="complete")
+            # Refresh stats after update
+            try:
+                st.session_state.stats = st.session_state.pipeline.get_stats()
+            except:
+                pass
+        else:
+            status.update(label="Failed", state="error")
 
 # ============================================================================
 # TAB 2: KNOWLEDGE BASE MANAGEMENT
@@ -974,55 +1173,22 @@ with tab_manage:
         
         st.markdown("---")
         
-        # Quick Update Section
-        st.markdown("#### ⚡ **Quick Updates**")
-        st.markdown("*Fast re-indexing without full rebuild*")
+        # Quick Update Section (Incremental)
+        st.markdown("#### ⚡ **Quick Updates (Incremental)**")
+        st.markdown("*Fast incremental updates - only processes new/changed items*")
         
-        # Update Tickets Only
-        if st.button("📋 Update Tickets Only", use_container_width=True, help="Re-index tickets (~30 sec)"):
-            with st.spinner("Updating tickets..."):
-                try:
-                    db = st.session_state.pipeline.db_manager
-                    db.reset_tickets_collection()
-                    db.add_tickets()
-                    st.session_state.stats = db.get_stats()
-                    st.session_state.pipeline._cache.clear()
-                    st.success(f"✅ Tickets updated! ({st.session_state.stats['tickets']} indexed)")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+        # Update Tickets Only (Fast)
+        if st.button("📋 Update Tickets Only (Fast)", use_container_width=True):
+            run_fast_update("scripts/update_tickets_only.py")
         
-        # Update Guides Only
-        if st.button("📚 Update Guides Only", use_container_width=True, help="Re-index guides (~10 sec)"):
-            with st.spinner("Updating guides..."):
-                try:
-                    db = st.session_state.pipeline.db_manager
-                    db.reset_guides_collection()
-                    db.add_guides()
-                    st.session_state.stats = db.get_stats()
-                    st.session_state.pipeline._cache.clear()
-                    st.success(f"✅ Guides updated! ({st.session_state.stats['guides']} chunks indexed)")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+        # Update Guides Only (Fast)
+        if st.button("📘 Update Guides Only (Fast)", use_container_width=True):
+            run_fast_update("scripts/update_guides_incremental.py")
         
-        # Update Both (Tickets + Guides)
-        if st.button("🔄 Update All (Tickets + Guides)", use_container_width=True, help="Re-index both (~1 min)"):
-            with st.spinner("Updating tickets and guides..."):
-                try:
-                    db = st.session_state.pipeline.db_manager
-                    
-                    # Update tickets
-                    db.reset_tickets_collection()
-                    db.add_tickets()
-                    
-                    # Update guides
-                    db.reset_guides_collection()
-                    db.add_guides()
-                    
-                    st.session_state.stats = db.get_stats()
-                    st.session_state.pipeline._cache.clear()
-                    st.success(f"✅ All updated! ({st.session_state.stats['tickets']} tickets, {st.session_state.stats['guides']} guide chunks)")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+        # Update All (Fast)
+        if st.button("🔄 Update All (Fast)", use_container_width=True):
+            run_fast_update("scripts/update_tickets_only.py")
+            run_fast_update("scripts/update_guides_incremental.py")
         
         st.markdown("---")
         
@@ -1034,7 +1200,7 @@ with tab_manage:
             with st.status("Rebuilding database...", expanded=True) as status:
                 try:
                     result = subprocess.run(
-                        [sys.executable, "scripts/rebuild_vector_db.py"],
+                        [sys.executable, "scripts/rebuild_vector_db_v2.py"],
                         cwd=project_root,
                         capture_output=True,
                         text=True,
