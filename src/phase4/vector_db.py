@@ -6,7 +6,15 @@ from typing import Tuple, List, Optional, Set
 
 import chromadb
 from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
+
+# LangChain embeddings (consistent with RAG pipeline)
+try:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+except ImportError:
+    try:
+        from langchain.embeddings import HuggingFaceEmbeddings
+    except ImportError:
+        raise ImportError("LangChain not installed. Install with: pip install langchain langchain-community")
 
 from config.settings import (
     DATA_DIR,
@@ -23,7 +31,7 @@ logger = logging.getLogger(__name__)
 class VectorDBManager:
     """
     Vector database manager for tickets and guide sections.
-    Now uses local SentenceTransformer embeddings.
+    Uses LangChain HuggingFaceEmbeddings (consistent with RAG pipeline).
     """
 
     def __init__(
@@ -45,8 +53,17 @@ class VectorDBManager:
         if embedding_model is None:
             embedding_model = LOCAL_EMBEDDING_MODEL
 
-        logger.info(f"Loading LOCAL embedding model: {embedding_model}")
-        self.embedding_model = SentenceTransformer(embedding_model)
+        logger.info(f"Loading LangChain embedding model: {embedding_model} (CPU mode)")
+        # Force CPU usage (CUDA disabled globally if USE_CUDA not set)
+        if not os.getenv("USE_CUDA", "").lower() == "true":
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        
+        # Use LangChain HuggingFaceEmbeddings (consistent with RAG pipeline)
+        self.embedding_model = HuggingFaceEmbeddings(
+            model_name=embedding_model,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True}
+        )
 
         logger.info(f"Initializing Chroma DB at: {self.db_path}")
         if persistent_client:
@@ -148,12 +165,24 @@ class VectorDBManager:
     # ------------------------------------------------------------
 
     def embed(self, text: str) -> List[float]:
-        """Embed a single text string with SentenceTransformer."""
-        return self.embedding_model.encode([text])[0].tolist()
+        """Embed a single text string using LangChain HuggingFaceEmbeddings."""
+        # Suppress progress bars
+        old_disable = os.environ.get('TQDM_DISABLE', '0')
+        os.environ['TQDM_DISABLE'] = '1'
+        try:
+            return self.embedding_model.embed_query(text)
+        finally:
+            os.environ['TQDM_DISABLE'] = old_disable
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Embed a batch of strings."""
-        return self.embedding_model.encode(texts).tolist()
+        """Embed a batch of strings using LangChain HuggingFaceEmbeddings."""
+        # Suppress progress bars
+        old_disable = os.environ.get('TQDM_DISABLE', '0')
+        os.environ['TQDM_DISABLE'] = '1'
+        try:
+            return self.embedding_model.embed_documents(texts)
+        finally:
+            os.environ['TQDM_DISABLE'] = old_disable
 
     # ------------------------------------------------------------
     # Ticket ingestion

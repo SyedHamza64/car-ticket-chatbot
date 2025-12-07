@@ -12,7 +12,7 @@ import cloudscraper
 from bs4 import BeautifulSoup, NavigableString, Tag
 from tqdm.asyncio import tqdm
 
-from config.settings import GUIDES_DATA_DIR
+from config.settings import GUIDES_DIR
 from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -126,19 +126,10 @@ class FastGuidesScraper:
             await self.session.close()
     
     async def fetch_page(self, url: str) -> Optional[str]:
-        """Fetch page content asynchronously."""
+        """Fetch page content asynchronously using cloudscraper directly."""
         async with self.semaphore:
-            try:
-                logger.debug(f"Fetching: {url}")
-                
-                async with self.session.get(url, timeout=30) as response:
-                    response.raise_for_status()
-                    content = await response.text()
-                    await asyncio.sleep(self.delay)
-                    return content
-            except Exception as e:
-                logger.warning(f"Error fetching {url} via aiohttp: {e}. Falling back to cloudscraper...")
-                return await self.fetch_with_cloudscraper(url)
+            # Use cloudscraper directly as aiohttp consistently fails for this site
+            return await self.fetch_with_cloudscraper(url)
     
     async def fetch_with_cloudscraper(self, url: str) -> Optional[str]:
         """Fallback fetch using cloudscraper to bypass protection layers."""
@@ -396,7 +387,7 @@ class FastGuidesScraper:
                     if elem.find(['p', 'li']) and elem.name == 'div':
                         continue
                     if self._is_boilerplate_element(elem):
-                continue
+                        continue
         
                     text = elem.get_text(' ', strip=True)
                     cleaned = self._clean_text(text)
@@ -568,8 +559,8 @@ class FastGuidesScraper:
                         # Find all siblings after this section
                         all_siblings = container.find_all(['section', 'p', 'ul', 'ol', 'div'], recursive=False)
                         section_found = False
-        content_parts = []
-        
+                        content_parts = []
+                        
                         for sibling in all_siblings:
                             if sibling == section or section in sibling.descendants:
                                 section_found = True
@@ -588,7 +579,7 @@ class FastGuidesScraper:
                             if sibling.name == 'ul' or sibling.name == 'ol':
                                 for li in sibling.find_all('li', recursive=False):
                                     text = self._clean_text(li.get_text(' ', strip=True))
-            if text and len(text) > 10:
+                                    if text and len(text) > 10:
                                         normalized = re.sub(r'\s+', ' ', text.lower())
                                         if normalized not in seen_text:
                                             seen_text.add(normalized)
@@ -599,7 +590,7 @@ class FastGuidesScraper:
                                     normalized = re.sub(r'\s+', ' ', text.lower())
                                     if normalized not in seen_text:
                                         seen_text.add(normalized)
-                content_parts.append(text)
+                                        content_parts.append(text)
         
                         if content_parts:
                             section_data['content'] = '\n\n'.join(content_parts)
@@ -826,7 +817,7 @@ class FastGuidesScraper:
             logger.warning("No guides to save")
             return
         
-        output_file = output_file or GUIDES_DATA_DIR / "guides.json"
+        output_file = output_file or GUIDES_DIR / "guides.json"
         output_file.parent.mkdir(parents=True, exist_ok=True)
         
         for guide in self.guides:
@@ -847,7 +838,7 @@ class FastGuidesScraper:
             logger.warning("No guides to save")
             return
         
-        output_dir = output_dir or GUIDES_DATA_DIR / "individual"
+        output_dir = output_dir or GUIDES_DIR / "individual"
         output_dir.mkdir(parents=True, exist_ok=True)
         
         for guide in self.guides:

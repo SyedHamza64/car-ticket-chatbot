@@ -13,6 +13,10 @@ Replaces custom RAG with LangChain primitives:
 """
 
 import os
+# Disable CUDA by default to avoid OOM errors (set USE_CUDA=true to enable)
+if not os.getenv("USE_CUDA", "").lower() == "true":
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 import pickle
 import logging
 from typing import List, Dict, Any, Optional, Tuple
@@ -349,8 +353,14 @@ class CrossEncoderRerankerWrapper:
     
     def __init__(self, model_name: str = RERANKER_MODEL):
         try:
-            self.ce = CrossEncoder(model_name)
-            logger.info(f"Loaded CrossEncoder reranker: {model_name}")
+            # Use CPU if CUDA is disabled, otherwise let it auto-detect
+            device = "cpu" if not os.getenv("USE_CUDA", "").lower() == "true" else None
+            if device:
+                self.ce = CrossEncoder(model_name, device=device)
+                logger.info(f"Loaded CrossEncoder reranker: {model_name} (CPU mode)")
+            else:
+                self.ce = CrossEncoder(model_name)
+                logger.info(f"Loaded CrossEncoder reranker: {model_name}")
         except Exception as e:
             logger.warning(f"Failed to load CrossEncoder: {e}")
             self.ce = None
@@ -427,9 +437,9 @@ class LangchainRAG:
         else:
             self.model_name = GROQ_MODEL
         
-        # 1. Initialize embeddings
+        # 1. Initialize embeddings (CPU mode - CUDA disabled globally)
         hf_model = hf_model_name or LOCAL_EMBEDDING_MODEL
-        logger.info(f"Loading HuggingFace embeddings: {hf_model}")
+        logger.info(f"Loading HuggingFace embeddings: {hf_model} (CPU mode)")
         self.embeddings = HuggingFaceEmbeddings(
             model_name=hf_model,
             model_kwargs={"device": "cpu"},
@@ -457,12 +467,12 @@ class LangchainRAG:
             )
         
         # Create retrievers for tickets and guides separately
-        # Increase k to get more candidates for better retrieval
+        # Reduced k for faster retrieval (was 300, now 50)
         self.tickets_retriever = self.chroma.as_retriever(
-            search_kwargs={"k": 300, "filter": {"type": "ticket"}}
+            search_kwargs={"k": 50, "filter": {"type": "ticket"}}
         )
         self.guides_retriever = self.chroma.as_retriever(
-            search_kwargs={"k": 300, "filter": {"type": "guide_chunk"}}
+            search_kwargs={"k": 50, "filter": {"type": "guide_chunk"}}
         )
         
         # Fallback: if filter doesn't work, use general retriever
@@ -470,7 +480,7 @@ class LangchainRAG:
             _ = self.tickets_retriever.get_relevant_documents("test")
         except Exception:
             logger.warning("Chroma filter not supported, using general retriever")
-            self.general_retriever = self.chroma.as_retriever(search_kwargs={"k": 400})
+            self.general_retriever = self.chroma.as_retriever(search_kwargs={"k": 100})  # Reduced from 400
             self.tickets_retriever = None
             self.guides_retriever = None
         
@@ -501,7 +511,7 @@ class LangchainRAG:
                     bm25_obj=bm25_obj,
                     ids=bm25_ids,
                     docs=bm25_docs,
-                    k=200
+                    k=50  # Reduced from 200 for speed
                 )
                 logger.info(f"BM25 retriever loaded with {len(bm25_ids)} documents")
         else:
@@ -547,10 +557,21 @@ CRITICAL RULES:
    - Include BOTH brand AND product name
    - List all products mentioned in the context
 
-3. **INCLUDE ALL LINKS:**
-   - If you see URLs like "https://www.lacuradellauto.it/..." in the context, include them
-   - Format as: [Product Name](URL)
-   - Include ALL links from the context
+3. **INCLUDE ALL PRODUCT LINKS (MANDATORY):**
+   - SEARCH the context for ALL URLs starting with "https://www.lacuradellauto.it/"
+   - When you mention a product, IMMEDIATELY check if there's a URL for it in the context
+   - If you find a URL, you MUST include it as a markdown link: [Product Name](complete-url)
+   - Copy the COMPLETE URL character-by-character from the context
+   - Example from context: "https://www.lacuradellauto.it/3004-gyeon-q2m-interiordetailer"
+   - How to write it: "[Gyeon Q2M InteriorDetailer](https://www.lacuradellauto.it/3004-gyeon-q2m-interiordetailer)"
+   - NEVER write incomplete URLs or generate URLs
+   - If NO URL exists in context for a product, mention the product name only (no link)
+   
+   **URL EXTRACTION PROCESS:**
+   Step 1: Find product recommendation in context
+   Step 2: Look for "https://" near that product name
+   Step 3: Copy the ENTIRE URL (from https:// to the end before any space/newline)
+   Step 4: Format as markdown: [Product Name](complete_url)
 
 4. **EXTRACT PROCEDURES:**
    - Copy exact steps, ratios, and instructions from the context
@@ -603,10 +624,21 @@ CRITICAL INSTRUCTIONS:
    - Include BOTH brand name AND product name (e.g., "Gyeon Q2M InteriorDetailer", not just "InteriorDetailer")
    - List all recommended products clearly
 
-4. **INCLUDE PRODUCT LINKS:**
-   - If you see URLs like "https://www.lacuradellauto.it/..." in the context, ALWAYS include them
-   - Format as clickable markdown links: [Product Name](URL)
-   - Include ALL product links mentioned
+4. **INCLUDE ALL PRODUCT LINKS (MANDATORY):**
+   - SEARCH the context for ALL URLs starting with "https://www.lacuradellauto.it/"
+   - When you mention a product, IMMEDIATELY check if there's a URL for it in the context
+   - If you find a URL, you MUST include it as a markdown link: [Product Name](complete-url)
+   - Copy the COMPLETE URL character-by-character from the context
+   - Example from context: "https://www.lacuradellauto.it/3004-gyeon-q2m-interiordetailer"
+   - How to write it: "[Gyeon Q2M InteriorDetailer](https://www.lacuradellauto.it/3004-gyeon-q2m-interiordetailer)"
+   - NEVER write incomplete URLs or generate URLs
+   - If NO URL exists in context for a product, mention the product name only (no link)
+   
+   **URL EXTRACTION PROCESS:**
+   Step 1: Find product recommendation in context
+   Step 2: Look for "https://" near that product name
+   Step 3: Copy the ENTIRE URL (from https:// to the end before any space/newline)
+   Step 4: Format as markdown: [Product Name](complete_url)
 
 5. **EXTRACT PROCEDURES/STEPS:**
    - If the context mentions steps (Step 1, Step 2, etc.), include them in order
@@ -794,51 +826,79 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
         query: str,
         top_k_tickets: int = 3,
         top_k_guides: int = 3,
+        fast_mode: bool = True,  # Fast mode: skip BM25 and reranking
     ) -> Dict[str, Any]:
         """
         Retrieve relevant tickets and guides using hybrid search.
         
+        Args:
+            query: User query
+            top_k_tickets: Number of tickets to return
+            top_k_guides: Number of guides to return
+            fast_mode: If True, skip BM25 and reranking for speed (default: True)
+        
         Returns:
             Dict with 'tickets' and 'guides' in Chroma-style format
         """
-        # Get dense candidates
+        # Get dense candidates with scores/distances
         if self.tickets_retriever and self.guides_retriever:
-            dense_tickets = self.tickets_retriever.get_relevant_documents(query)
-            dense_guides = self.guides_retriever.get_relevant_documents(query)
+            # Use underlying chroma to get distances
+            dense_tickets_with_scores = self.chroma.similarity_search_with_score(
+                query, k=50, filter={"type": "ticket"}
+            )
+            dense_guides_with_scores = self.chroma.similarity_search_with_score(
+                query, k=50, filter={"type": "guide_chunk"}
+            )
+            # Unpack into documents with distance in metadata
+            dense_tickets = []
+            for doc, score in dense_tickets_with_scores:
+                doc.metadata["distance"] = float(score)
+                dense_tickets.append(doc)
+            dense_guides = []
+            for doc, score in dense_guides_with_scores:
+                doc.metadata["distance"] = float(score)
+                dense_guides.append(doc)
         else:
             # Fallback: get all and filter
             all_dense = self.general_retriever.get_relevant_documents(query)
             dense_tickets = self._filter_by_type(all_dense, "ticket")
             dense_guides = self._filter_by_type(all_dense, "guide_chunk")
         
-        # Get sparse candidates
-        sparse_docs = []
-        if self.bm25_retriever:
-            sparse_docs = self.bm25_retriever.get_relevant_documents(query)
-        
-        sparse_tickets = self._filter_by_type(sparse_docs, "ticket")
-        sparse_guides = self._filter_by_type(sparse_docs, "guide_chunk")
-        
-        # Hybrid retrieval for tickets
-        ticket_candidates = self._hybrid_retrieve(
-            query,
-            dense_tickets,
-            sparse_tickets,
-            top_k=max(top_k_tickets * 10, 50)  # Get more candidates for better ranking
-        )
-        
-        # Hybrid retrieval for guides
-        guide_candidates = self._hybrid_retrieve(
-            query,
-            dense_guides,
-            sparse_guides,
-            top_k=max(top_k_guides * 10, 50)
-        )
-        
-        # Rerank if available
-        if self.reranker:
-            ticket_candidates = self.reranker.rerank(query, ticket_candidates, top_k=top_k_tickets * 3)
-            guide_candidates = self.reranker.rerank(query, guide_candidates, top_k=top_k_guides * 3)
+        if fast_mode:
+            # Fast mode: Use dense retrieval only, no hybrid/reranking
+            ticket_candidates = dense_tickets[:top_k_tickets * 3]
+            guide_candidates = dense_guides[:top_k_guides * 3]
+        else:
+            # Full mode: Hybrid retrieval with BM25
+            # Get sparse candidates
+            sparse_docs = []
+            if self.bm25_retriever:
+                sparse_docs = self.bm25_retriever.get_relevant_documents(query)
+            
+            sparse_tickets = self._filter_by_type(sparse_docs, "ticket")
+            sparse_guides = self._filter_by_type(sparse_docs, "guide_chunk")
+            
+            # Hybrid retrieval for tickets (reduced candidate pool for speed)
+            ticket_candidates = self._hybrid_retrieve(
+                query,
+                dense_tickets,
+                sparse_tickets,
+                top_k=max(top_k_tickets * 5, 20)  # Reduced from 50 to 20 for speed
+            )
+            
+            # Hybrid retrieval for guides (reduced candidate pool for speed)
+            guide_candidates = self._hybrid_retrieve(
+                query,
+                dense_guides,
+                sparse_guides,
+                top_k=max(top_k_guides * 5, 20)  # Reduced from 50 to 20 for speed
+            )
+            
+            # Rerank if available (but skip for speed - reranking is expensive on CPU)
+            # Uncomment below if you want reranking (adds 5-8 seconds)
+            # if self.reranker:
+            #     ticket_candidates = self.reranker.rerank(query, ticket_candidates, top_k=top_k_tickets * 3)
+            #     guide_candidates = self.reranker.rerank(query, guide_candidates, top_k=top_k_guides * 3)
         
         # Build Chroma-style return structure
         def _build_chroma_format(docs: List[Document]) -> Dict[str, Any]:
@@ -852,9 +912,15 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
                 ids.append(doc_id)
                 documents.append(doc.page_content)
                 metadatas.append(doc.metadata)
-                # Convert similarity back to distance for compatibility
-                hybrid_score = doc.metadata.get("hybrid_score", 0.0)
-                distance = 1.0 - hybrid_score
+                # Get distance: prefer direct distance (from ChromaDB), else convert from hybrid_score
+                if "distance" in doc.metadata:
+                    distance = float(doc.metadata["distance"])
+                elif "hybrid_score" in doc.metadata:
+                    hybrid_score = float(doc.metadata["hybrid_score"])
+                    distance = 1.0 - hybrid_score
+                else:
+                    # No score available, use neutral distance
+                    distance = 0.5
                 distances.append(distance)
             
             return {
@@ -870,11 +936,39 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
             "guides": _build_chroma_format(guide_candidates[:top_k_guides]),
         }
     
+    def _preserve_urls_in_truncation(self, text: str, max_chars: int) -> str:
+        """Truncate text but preserve complete URLs even if they extend beyond max_chars."""
+        if len(text) <= max_chars:
+            return text
+        
+        # Find all URLs in the text
+        import re
+        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+        urls = re.findall(url_pattern, text)
+        
+        # If truncating, try to include URLs that appear near the truncation point
+        truncated = text[:max_chars]
+        
+        # Check if we cut off a URL - look for partial URLs at the end
+        if truncated and not truncated.endswith('...'):
+            # Check if there's a URL starting before max_chars that extends beyond
+            for url in urls:
+                url_start = text.find(url)
+                if url_start < max_chars and url_start + len(url) > max_chars:
+                    # Include the complete URL even if it extends beyond max_chars
+                    truncated = text[:url_start + len(url)]
+                    if len(text) > len(truncated):
+                        truncated += "..."
+                    return truncated
+        
+        # Standard truncation
+        return truncated + "..."
+    
     def build_context(
         self,
         tickets_data: Dict[str, Any],
         guides_data: Dict[str, Any],
-        max_ticket_chars: int = 1500,
+        max_ticket_chars: int = 3000,  # Increased from 1500 to capture full agent responses
         max_guide_chars: int = 1500,
         max_tickets: int = 5,
         max_guides: int = 3,
@@ -903,7 +997,7 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
                     header += f"\nSubject: {subject}"
                 header += "\n"
                 
-                truncated = (doc[:max_ticket_chars] + "...") if len(doc) > max_ticket_chars else doc
+                truncated = self._preserve_urls_in_truncation(doc, max_ticket_chars)
                 ticket_text = header + truncated + "\n\n"
                 
                 if total_chars + len(ticket_text) > max_total_chars:
@@ -940,7 +1034,7 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
                     header += f" - {section}"
                 header += "\n"
                 
-                truncated = (doc[:max_guide_chars] + "...") if len(doc) > max_guide_chars else doc
+                truncated = self._preserve_urls_in_truncation(doc, max_guide_chars)
                 guide_text = header + truncated + "\n\n"
                 
                 if total_chars + len(guide_text) > max_total_chars:
@@ -962,15 +1056,22 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
         query: str,
         top_k_tickets: int = 3,
         top_k_guides: int = 3,
+        fast_mode: bool = True,  # Fast mode by default for speed
     ) -> Dict[str, Any]:
         """
         Main answer method - retrieves context and generates answer.
         
+        Args:
+            query: User query
+            top_k_tickets: Number of tickets to retrieve
+            top_k_guides: Number of guides to retrieve
+            fast_mode: If True, skip BM25 and reranking for speed (default: True)
+        
         Returns:
             Dict with 'query', 'answer', 'context', 'sources'
         """
-        # Retrieve
-        retrieved = self.retrieve(query, top_k_tickets, top_k_guides)
+        # Retrieve (with fast_mode for speed)
+        retrieved = self.retrieve(query, top_k_tickets, top_k_guides, fast_mode=fast_mode)
         
         # Build context
         context = self.build_context(
@@ -994,12 +1095,24 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
     def get_stats(self) -> Dict[str, int]:
         """Get statistics about indexed documents."""
         try:
-            # Try to get collection
             collection = self.chroma._collection
-            if collection:
-                count = collection.count()
-                return {"tickets": count, "guides": count}  # Approximate
-        except Exception:
-            pass
-        
-        return {"tickets": 0, "guides": 0}
+            if not collection:
+                return {"tickets": 0, "guides": 0}
+            
+            # Try to count by type using where filter
+            try:
+                tickets_data = collection.get(where={"type": "ticket"}, limit=None)
+                guides_data = collection.get(where={"type": "guide_chunk"}, limit=None)
+                tickets_count = len(tickets_data.get("ids", []))
+                guides_count = len(guides_data.get("ids", []))
+                return {"tickets": tickets_count, "guides": guides_count}
+            except Exception:
+                # Fallback: get all and count manually
+                all_data = collection.get(limit=None)
+                metadatas = all_data.get("metadatas", [])
+                tickets_count = sum(1 for meta in metadatas if meta and meta.get("type") == "ticket")
+                guides_count = sum(1 for meta in metadatas if meta and meta.get("type") == "guide_chunk")
+                return {"tickets": tickets_count, "guides": guides_count}
+        except Exception as e:
+            logger.error(f"Error getting stats: {e}")
+            return {"tickets": 0, "guides": 0}

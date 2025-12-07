@@ -8,6 +8,9 @@ env/
 venv/
 ENV/
 .venv
+*.egg-info/
+dist/
+build/
 
 # Data (exclude all, but keep structure)
 data/raw/*
@@ -51,4 +54,30 @@ Thumbs.db
 models/
 *.bin
 *.gguf
+
+# Sample/Test files
+rag_sample.py
+*_sample.py
+*_test.py
+test_*.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~
 

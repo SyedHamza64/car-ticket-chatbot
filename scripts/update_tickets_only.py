@@ -1,144 +1,175 @@
+#!/usr/bin/env python3
+"""
+Incremental ticket updater (LangChain + HuggingFaceEmbeddings + Chroma + BM25)
+⭐ Includes a visible tqdm progress bar for embeddings ⭐
+"""
+
+import sys
 import json
 import pickle
-import sys
-from pathlib import Path
-from tqdm import tqdm
 import logging
-from dotenv import load_dotenv
+from pathlib import Path
+from typing import List
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(levelname)s] %(message)s'
-)
+from tqdm import tqdm
 
-# Add project root to path for imports
+# Make repo root importable
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
-# Load environment variables
-load_dotenv()
-
+# Config import
 from config.settings import (
-    PROCESSED_DIR,
+    PROCESSED_TICKETS_FILE,
+    CHROMA_DB_DIR,
+    LOCAL_EMBEDDING_MODEL,
     BM25_INDEX_PATH,
 )
-from src.phase4.vector_db import VectorDBManager
 
-logger = logging.getLogger(__name__)
+# LangChain imports (with fallback)
+try:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from langchain_community.vectorstores import Chroma
+except Exception:
+    from langchain.embeddings import HuggingFaceEmbeddings
+    from langchain.vectorstores import Chroma
+
+from rank_bm25 import BM25Okapi
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger("update_tickets_only")
 
 
-def sanitize_metadata(md: dict) -> dict:
-    """Replace None values with empty strings for ChromaDB compatibility."""
-    return {k: "" if v is None else v for k, v in md.items()}
-
-
-def load_processed_tickets() -> list:
-    path = PROCESSED_DIR / "processed_tickets.json"
-    if not path.exists():
-        raise FileNotFoundError(f"Processed tickets file not found: {path}")
-
+# ----------------------------
+# Load & save helpers
+# ----------------------------
+def load_processed_tickets(path: Path):
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    logger.info(f"Loaded {len(data)} processed tickets.")
+    return data
 
 
-def load_existing_bm25():
-    if not BM25_INDEX_PATH.exists():
-        return None, None
+def load_bm25(path: Path):
+    if not path.exists():
+        logger.info("No BM25 index found — creating new.")
+        return None, [], []
 
-    with open(BM25_INDEX_PATH, "rb") as f:
+    with open(path, "rb") as f:
         data = pickle.load(f)
-        # Handle dictionary format from rebuild_vector_db_v2.py
-        if isinstance(data, dict):
-            return data.get("bm25"), data.get("ids")
-        # Handle tuple format (legacy)
-        elif isinstance(data, tuple):
-            return data[0], data[1]
-        else:
-            return None, None
+
+    return data["bm25"], data["ids"], data["docs"]
 
 
-def update_bm25_index(existing_bm25, existing_ids, new_docs, new_ids):
-    from rank_bm25 import BM25Okapi
-
-    if existing_bm25 is None:
-        # build fresh index
-        tokenized = [doc.lower().split() for doc in new_docs]
-        bm25 = BM25Okapi(tokenized)
-        return bm25, new_ids
-
-    # append incremental docs
-    all_docs = existing_ids + new_ids
-    all_text = existing_bm25.corpus + [doc.lower().split() for doc in new_docs]
-
-    bm25 = BM25Okapi(all_text)
-    return bm25, all_docs
+def save_bm25(path: Path, bm25, ids, docs):
+    with open(path, "wb") as f:
+        pickle.dump({"bm25": bm25, "ids": ids, "docs": docs}, f)
+    logger.info(f"Saved BM25 index ({len(ids)} docs).")
 
 
+# ----------------------------
+# Main script
+# ----------------------------
 def main():
-    logger.info("=== Incremental Ticket Update ===")
+    logger.info("=== Incremental Ticket Updater (with tqdm progress) ===")
 
-    db = VectorDBManager()
+    # Load tickets
+    tickets = load_processed_tickets(Path(PROCESSED_TICKETS_FILE))
 
-    # Load full processed tickets
-    tickets = load_processed_tickets()
+    # Init embeddings
+    logger.info(f"Loading embedding model: {LOCAL_EMBEDDING_MODEL}")
+    embedder = HuggingFaceEmbeddings(model_name=LOCAL_EMBEDDING_MODEL)
 
-    # Load existing IDs from Chroma
-    existing_ids = set(db.tickets_coll.get()["ids"])
+    # Init Chroma
+    chroma = Chroma(
+        collection_name="rag_v2",
+        embedding_function=embedder,
+        persist_directory=str(CHROMA_DB_DIR),
+    )
 
+    # Fetch existing IDs
+    col = chroma._collection
+    existing = col.get(include=[])
+    existing_ids = set(existing.get("ids", []))
+    logger.info(f"Chroma has {len(existing_ids)} existing documents.")
+
+    # Detect new tickets
+    new_texts = []
     new_ids = []
-    new_docs = []
-    new_meta = []
+    new_metas = []
 
     for t in tickets:
         tid = t.get("ticket_id")
-        if not tid:
+        if tid is None:
             continue
+        uid = f"ticket_{tid}"
 
-        ticket_uid = f"ticket_{tid}"
-        if ticket_uid in existing_ids:
-            continue  # already indexed → skip
+        if uid not in existing_ids:
+            text = t.get("searchable_text") or t.get("description") or ""
+            if not text.strip():
+                continue
 
-        text = t.get("searchable_text", "").strip()
-        if not text:
-            continue
+            new_texts.append(text.strip())
+            new_ids.append(uid)
+            new_metas.append({
+                "type": "ticket",
+                "ticket_id": tid,
+                "subject": t.get("subject", ""),
+                "status": t.get("status", ""),
+            })
 
-        new_ids.append(ticket_uid)
-        new_docs.append(text)
-
-        meta = {
-            "ticket_id": tid,
-            "subject": t.get("subject") or "",
-            "status": t.get("status") or "",
-            "priority": t.get("priority") or "",
-            "created_at": t.get("created_at") or "",
-        }
-        new_meta.append(sanitize_metadata(meta))
-
-    if not new_ids:
-        logger.info("No new tickets to index. Exiting.")
+    if not new_texts:
+        logger.info("No new tickets to embed — everything is up to date.")
         return
 
-    logger.info(f"Found {len(new_ids)} new tickets → embedding...")
+    logger.info(f"🆕 New tickets detected: {len(new_texts)}")
+    logger.info("🔧 Generating embeddings with tqdm progress bar...")
 
-    embeddings = db.embed_batch(new_docs)
+    # ----------------------------
+    # ⭐ MANUAL EMBEDDING WITH TQDM ⭐
+    # ----------------------------
+    embeddings = []
+    batch_size = 32
 
-    logger.info("Adding to Chroma...")
-    db.tickets_coll.add(
-        ids=new_ids,
-        documents=new_docs,
-        embeddings=embeddings,
-        metadatas=new_meta,
-    )
+    for i in tqdm(range(0, len(new_texts), batch_size), desc="Embedding tickets"):
+        batch = new_texts[i: i + batch_size]
+        batch_emb = embedder.embed_documents(batch)
+        embeddings.extend(batch_emb)
 
-    logger.info("Updating BM25 index...")
+    logger.info("Embeddings complete.")
 
-    existing_bm25, existing_bm25_ids = load_existing_bm25()
-    bm25, final_ids = update_bm25_index(existing_bm25, existing_bm25_ids or [], new_docs, new_ids)
+    # ----------------------------
+    # Add to Chroma
+    # ----------------------------
+    logger.info("📦 Adding tickets to Chroma...")
+    try:
+        col.add(
+            ids=new_ids,
+            documents=new_texts,
+            embeddings=embeddings,
+            metadatas=new_metas,
+        )
+        logger.info("Chroma updated successfully.")
+    except Exception as e:
+        logger.exception(f"Chroma insertion failed: {e}")
+        return
 
-    with open(BM25_INDEX_PATH, "wb") as f:
-        pickle.dump((bm25, final_ids), f)
+    # ----------------------------
+    # BM25 update
+    # ----------------------------
+    bm25, bm25_ids, bm25_docs = load_bm25(Path(BM25_INDEX_PATH))
 
-    logger.info(f"Completed: Added {len(new_ids)} new tickets.")
+    if bm25 is None:
+        bm25_docs = new_texts.copy()
+        bm25_ids = new_ids.copy()
+        bm25 = BM25Okapi([d.lower().split() for d in bm25_docs])
+    else:
+        bm25_docs.extend(new_texts)
+        bm25_ids.extend(new_ids)
+        bm25 = BM25Okapi([d.lower().split() for d in bm25_docs])
+
+    save_bm25(Path(BM25_INDEX_PATH), bm25, bm25_ids, bm25_docs)
+
+    logger.info("🎉 Update complete — embedding + Chroma + BM25 updated.")
 
 
 if __name__ == "__main__":

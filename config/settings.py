@@ -18,6 +18,10 @@ PROCESSED_TICKETS_FILE = PROCESSED_DIR / "processed_tickets.json"
 GUIDES_COMBINED_FILE = GUIDES_DIR / "guides.json"
 GUIDES_CHUNKS_FILE = PROCESSED_DIR / "guides_chunks.json"
 
+# Legacy aliases for backward compatibility
+ZENDESK_EXPORT_FILE = RAW_DIR / "export_combined.json"
+PROCESSED_DATA_DIR = PROCESSED_DIR
+
 # -----------------------------
 # Embedding config (LOCAL ONLY)
 # -----------------------------
@@ -60,3 +64,8 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral:7b-instruct")
 
 # Misc
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Logging config
+LOGS_DIR = BASE_DIR / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOGS_DIR / "app.log"

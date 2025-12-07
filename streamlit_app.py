@@ -880,6 +880,7 @@ with tab_query:
                             created_at = meta.get('created_at', 'N/A')
                             
                             # Relevance badge based on distance (lower distance = higher relevance)
+                            # Adjusted thresholds for hybrid scoring (produces higher distances than pure dense)
                             relevance_badge = ""
                             try:
                                 dist = float(dists[i-1]) if len(dists) >= i else None
@@ -887,9 +888,9 @@ with tab_query:
                                 dist = None
                             
                             if dist is not None:
-                                if dist <= 0.25:
+                                if dist <= 0.5:  # Was 0.25 - more lenient for hybrid scoring
                                     relevance_badge = "🟢 **High relevance**"
-                                elif dist <= 0.5:
+                                elif dist <= 0.75:  # Was 0.5 - medium range expanded
                                     relevance_badge = "🟡 **Medium relevance**"
                                 else:
                                     relevance_badge = "🔴 **Low relevance**"
@@ -964,7 +965,8 @@ with tab_query:
                             guide_url = meta.get('url', '')
                             guide_number = meta.get('guide_number', '')
                             
-                            # Relevance badge based on distance
+                            # Relevance badge based on distance (lower distance = higher relevance)
+                            # Adjusted thresholds for hybrid scoring (produces higher distances than pure dense)
                             relevance_badge = ""
                             try:
                                 dist = float(dists[i-1]) if len(dists) >= i else None
@@ -972,9 +974,9 @@ with tab_query:
                                 dist = None
                             
                             if dist is not None:
-                                if dist <= 0.25:
+                                if dist <= 0.5:  # Was 0.25 - more lenient for hybrid scoring
                                     relevance_badge = "🟢 **High relevance**"
-                                elif dist <= 0.5:
+                                elif dist <= 0.75:  # Was 0.5 - medium range expanded
                                     relevance_badge = "🟡 **Medium relevance**"
                                 else:
                                     relevance_badge = "🔴 **Low relevance**"
@@ -1053,80 +1055,289 @@ with tab_manage:
     
     col1, col2 = st.columns(2, gap="large")
     
-    # Left column
-    with col1:
-        # Upload Zendesk Export
-        st.markdown("#### 📤 **Upload Zendesk Export**")
-        st.markdown("*Upload raw Zendesk export file (NDJSON format)*")
-        
-        uploaded = st.file_uploader("Upload JSON", type=['json'], label_visibility="collapsed")
-        if uploaded:
+    # Main upload section - simplified flow
+    st.markdown("#### 📤 **Upload Zendesk Export**")
+    st.markdown("*Upload raw Zendesk export file (JSON or NDJSON format)*")
+    
+    uploaded = st.file_uploader("Upload JSON", type=['json'], label_visibility="collapsed")
+    
+    if uploaded:
+        try:
+            # Read and parse file
+            content = uploaded.read().decode('utf-8')
+            uploaded_tickets = []
+            
             try:
-                # Read the uploaded file content
-                content = uploaded.read().decode('utf-8')
-                
-                # Parse NDJSON (each line is a JSON object)
-                new_tickets = []
+                # Try NDJSON format first (one JSON per line)
                 for line in content.strip().split('\n'):
                     if line.strip():
                         ticket = json.loads(line)
-                        new_tickets.append(ticket)
+                        uploaded_tickets.append(ticket)
+            except json.JSONDecodeError:
+                # If NDJSON fails, try regular JSON array
+                uploaded_tickets = json.loads(content)
+                if not isinstance(uploaded_tickets, list):
+                    uploaded_tickets = [uploaded_tickets]
+            
+            st.success(f"📊 Found **{len(uploaded_tickets)}** tickets in uploaded file")
+            
+            # Option to clear existing tickets
+            clear_existing = st.checkbox("🗑️ Clear existing tickets from knowledge base before checking", value=False, 
+                                        help="If checked, all existing tickets will be removed from ChromaDB before checking for duplicates. All uploaded tickets will be treated as new.")
+            
+            # Check against existing KB to find unique tickets
+            st.info("🔍 Checking against existing knowledge base...")
+            
+            try:
+                from src.phase4.vector_db import VectorDBManager
+                db = VectorDBManager()
                 
-                st.info(f"📊 Found **{len(new_tickets)}** tickets in export")
+                # Clear existing tickets if requested
+                if clear_existing:
+                    with st.spinner("🗑️ Clearing existing tickets from knowledge base..."):
+                        if db.rag_v2_coll:
+                            try:
+                                # Get all ticket IDs
+                                ticket_data = db.rag_v2_coll.get(where={"type": "ticket"}, limit=None)
+                                ticket_ids = ticket_data.get("ids", [])
+                                if ticket_ids:
+                                    db.rag_v2_coll.delete(ids=ticket_ids)
+                                    st.success(f"✅ Cleared {len(ticket_ids)} existing tickets from knowledge base")
+                            except Exception as e:
+                                st.warning(f"⚠️ Could not clear tickets: {e}")
+                        elif db.tickets_coll:
+                            try:
+                                all_data = db.tickets_coll.get(limit=None)
+                                ticket_ids = all_data.get("ids", [])
+                                if ticket_ids:
+                                    db.tickets_coll.delete(ids=ticket_ids)
+                                    st.success(f"✅ Cleared {len(ticket_ids)} existing tickets from knowledge base")
+                            except Exception as e:
+                                st.warning(f"⚠️ Could not clear tickets: {e}")
                 
-                # Show preview of first ticket
-                with st.expander("📄 Preview First Ticket", expanded=False):
-                    if new_tickets:
-                        preview = {
-                            'id': new_tickets[0].get('id'),
-                            'subject': new_tickets[0].get('subject'),
-                            'status': new_tickets[0].get('status'),
-                            'created_at': new_tickets[0].get('created_at')
-                        }
-                        st.json(preview)
+                # Get existing ticket IDs from KB
+                existing_kb_ids = set()
+                if db.rag_v2_coll:
+                    try:
+                        existing_data = db.rag_v2_coll.get(where={"type": "ticket"}, limit=None)
+                        # Extract ticket IDs from format: ticket_{id}__idx{chunk_index} or ticket_{id}
+                        for id_ in existing_data.get("ids", []):
+                            if id_.startswith("ticket_"):
+                                # Handle both formats: ticket_123 or ticket_123__idx0
+                                parts = id_.split("__idx")
+                                ticket_part = parts[0]  # ticket_123
+                                if "_" in ticket_part:
+                                    try:
+                                        ticket_id = int(ticket_part.split("_")[-1])
+                                        existing_kb_ids.add(ticket_id)
+                                    except ValueError:
+                                        continue
+                    except:
+                        # Fallback: get all and filter
+                        all_data = db.rag_v2_coll.get(limit=None)
+                        ids = all_data.get("ids", [])
+                        metas = all_data.get("metadatas", [])
+                        for i, meta in enumerate(metas):
+                            if meta and meta.get("type") == "ticket" and i < len(ids):
+                                id_ = ids[i]
+                                if id_.startswith("ticket_"):
+                                    parts = id_.split("__idx")
+                                    ticket_part = parts[0]
+                                    if "_" in ticket_part:
+                                        try:
+                                            ticket_id = int(ticket_part.split("_")[-1])
+                                            existing_kb_ids.add(ticket_id)
+                                        except ValueError:
+                                            continue
+                elif db.tickets_coll:
+                    # Extract ticket IDs from format: ticket_{id}__idx{chunk_index} or ticket_{id}
+                    for id_ in db.tickets_coll.get()["ids"]:
+                        if id_.startswith("ticket_"):
+                            parts = id_.split("__idx")
+                            ticket_part = parts[0]
+                            if "_" in ticket_part:
+                                try:
+                                    ticket_id = int(ticket_part.split("_")[-1])
+                                    existing_kb_ids.add(ticket_id)
+                                except ValueError:
+                                    continue
                 
-                if st.button("➕ Add to Raw Data", use_container_width=True, type="primary"):
-                    # Load existing combined export
-                    combined_path = Path("data/raw/export_combined.json")
-                    existing_tickets = []
-                    existing_ids = set()
-                    
-                    if combined_path.exists():
-                        with open(combined_path, 'r', encoding='utf-8') as f:
-                            existing_tickets = json.load(f)
-                            existing_ids = {t.get('id') for t in existing_tickets}
-                    
-                    # Add only new tickets (avoid duplicates)
-                    added_count = 0
-                    for ticket in new_tickets:
-                        if ticket.get('id') not in existing_ids:
-                            existing_tickets.append(ticket)
-                            added_count += 1
-                    
-                    # Save updated combined file
-                    with open(combined_path, 'w', encoding='utf-8') as f:
-                        json.dump(existing_tickets, f, ensure_ascii=False, indent=2)
-                    
-                    if added_count > 0:
-                        st.success(f"✅ Added **{added_count}** new tickets to raw data!")
-                        st.info("💡 Now click **Process Tickets** → **Rebuild Vector DB** to update the knowledge base")
+                # Find unique tickets
+                unique_tickets = []
+                duplicate_count = 0
+                for ticket in uploaded_tickets:
+                    ticket_id = ticket.get('id')
+                    if ticket_id and ticket_id not in existing_kb_ids:
+                        unique_tickets.append(ticket)
                     else:
-                        st.warning("⚠️ All tickets already exist in the database")
+                        duplicate_count += 1
+                
+                # Display results
+                col_stat1, col_stat2 = st.columns(2)
+                with col_stat1:
+                    st.metric("✅ Unique Tickets", len(unique_tickets), delta=f"{len(unique_tickets)} new")
+                with col_stat2:
+                    st.metric("⚠️ Duplicates", duplicate_count, delta=f"{duplicate_count} already in KB")
+                
+                if len(unique_tickets) == 0:
+                    st.warning("⚠️ All tickets already exist in the knowledge base. No new tickets to import.")
+                else:
+                    # Show preview
+                    with st.expander("📄 Preview First Unique Ticket", expanded=False):
+                        if unique_tickets:
+                            preview = {
+                                'id': unique_tickets[0].get('id'),
+                                'subject': unique_tickets[0].get('subject'),
+                                'status': unique_tickets[0].get('status'),
+                                'created_at': unique_tickets[0].get('created_at')
+                            }
+                            st.json(preview)
+                    
+                    # Store unique tickets in session state for processing
+                    st.session_state.unique_tickets_to_process = unique_tickets
+                    st.session_state.unique_tickets_count = len(unique_tickets)
+                    
+                    st.success(f"💾 Ready to process **{len(unique_tickets)}** unique tickets")
+                    
+                    # Process button
+                    st.markdown("---")
+                    if st.button("🚀 Process & Update Knowledge Base", type="primary", use_container_width=True):
+                        unique_tickets = st.session_state.get("unique_tickets_to_process", [])
+                        if not unique_tickets:
+                            st.error("No unique tickets to process. Please upload a file first.")
+                            st.stop()
                         
-            except json.JSONDecodeError as e:
-                st.error(f"Invalid JSON format: {e}")
+                        with st.status("Processing and updating knowledge base...", expanded=True) as status:
+                            # Step 1: Process tickets (clean, extract conversation)
+                            status.write(f"📝 Step 1/2: Processing {len(unique_tickets)} unique tickets...")
+                            try:
+                                import tempfile
+                                import os
+                                
+                                # Create temporary file with only unique tickets
+                                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp_file:
+                                    json.dump(unique_tickets, tmp_file, ensure_ascii=False, indent=2)
+                                    tmp_path = Path(tmp_file.name)
+                                
+                                # Set environment variable for the script to use
+                                env = os.environ.copy()
+                                env['ZENDESK_EXPORT_FILE'] = str(tmp_path)
+                                
+                                # Use Popen for real-time streaming
+                                process = subprocess.Popen(
+                                    [sys.executable, "scripts/process_tickets_only.py"],
+                                    cwd=project_root,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    text=True,
+                                    bufsize=1,  # Line buffered
+                                    universal_newlines=True,
+                                    env=env
+                                )
+                                
+                                # Stream output in real-time
+                                for line in iter(process.stdout.readline, ''):
+                                    if line:
+                                        line = line.strip()
+                                        if line:
+                                            status.write(line)
+                                
+                                process.wait()
+                                
+                                # Clean up temp file
+                                if tmp_path.exists():
+                                    tmp_path.unlink()
+                                
+                                if process.returncode != 0:
+                                    status.update(label="❌ Processing failed", state="error")
+                                    st.error("Processing failed. Check logs above.")
+                                    st.stop()
+                                
+                            except Exception as e:
+                                status.write(f"❌ Error processing: {e}")
+                                st.error(f"Processing failed: {e}")
+                                import traceback
+                                st.code(traceback.format_exc())
+                                st.stop()
+                            
+                            # Step 2: Generate embeddings and update KB (only new tickets will be added)
+                            status.write("")
+                            status.write("🔍 Step 2/2: Generating embeddings and updating knowledge base...")
+                            try:
+                                # Use Popen for real-time streaming
+                                process = subprocess.Popen(
+                                    [sys.executable, "scripts/update_tickets_only.py"],
+                                    cwd=project_root,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    text=True,
+                                    bufsize=1,  # Line buffered
+                                    universal_newlines=True
+                                )
+                                
+                                # Stream output in real-time
+                                for line in iter(process.stdout.readline, ''):
+                                    if line:
+                                        line = line.strip()
+                                        if line:
+                                            status.write(line)
+                                
+                                process.wait()
+                                
+                                if process.returncode == 0:
+                                    status.update(label="✅ Complete! Knowledge base updated", state="complete")
+                                    # Refresh stats
+                                    try:
+                                        st.session_state.stats = st.session_state.pipeline.get_stats()
+                                    except:
+                                        pass
+                                    unique_count = st.session_state.get("unique_tickets_count", len(unique_tickets))
+                                    st.success(f"🎉 Successfully imported **{unique_count}** new tickets!")
+                                    st.balloons()
+                                    # Clear session state
+                                    if "unique_tickets_to_process" in st.session_state:
+                                        del st.session_state.unique_tickets_to_process
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    status.update(label="❌ Update failed", state="error")
+                                    st.error("Failed to update knowledge base. Check logs above.")
+                                    st.code(result.stdout)
+                            except Exception as e:
+                                status.write(f"❌ Error: {e}")
+                                st.error(f"Update failed: {e}")
+                                import traceback
+                                st.code(traceback.format_exc())
+                    
             except Exception as e:
-                st.error(f"Error: {e}")
-        
-        st.markdown("---")
-        
+                st.error(f"❌ Error checking knowledge base: {e}")
+                import traceback
+                with st.expander("🔍 Error Details", expanded=False):
+                    st.code(traceback.format_exc())
+                        
+        except json.JSONDecodeError as e:
+            st.error(f"❌ Invalid JSON format: {e}")
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
+            import traceback
+            with st.expander("🔍 Error Details", expanded=False):
+                st.code(traceback.format_exc())
+    
+    st.markdown("---")
+    
+    # Simplified right column - only essential actions
+    col1, col2 = st.columns(2, gap="large")
+    
+    with col1:
         # Refresh Guides
         st.markdown("#### 🌐 **Refresh Guides**")
-        st.markdown("*Scrape latest guides from LaCuraDellAuto website*")
+        st.markdown("*Scrape, chunk, and update guide embeddings*")
         
         if st.button("🔄 Scrape Guides", use_container_width=True):
-            with st.status("Scraping guides...", expanded=True) as status:
+            with st.status("Processing guides...", expanded=True) as status:
                 try:
+                    # Step 1: Scrape guides
+                    status.write("📥 Step 1/4: Scraping guides from website...")
                     process = subprocess.Popen(
                         [sys.executable, "-m", "src.phase3.scrape_guides_fast"],
                         cwd=project_root,
@@ -1141,103 +1352,227 @@ with tab_manage:
                     
                     process.wait(timeout=120)
                     
-                    if process.returncode == 0:
-                        status.update(label="✅ Guides scraped!", state="complete")
-                    else:
+                    if process.returncode != 0:
                         status.update(label="❌ Scraping failed", state="error")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-    
-    # Right column
-    with col2:
-        # Process Tickets
-        st.markdown("#### 🔧 **Process Tickets**")
-        st.markdown("*Process raw ticket exports from* `data/raw/`")
-        
-        if st.button("⚙️ Process Tickets", use_container_width=True):
-            with st.spinner("Processing..."):
-                try:
-                    result = subprocess.run(
-                        [sys.executable, "-m", "src.phase2.process_tickets"],
-                        cwd=project_root,
-                        capture_output=True,
-                        text=True,
-                        timeout=180
-                    )
-                    if result.returncode == 0:
-                        st.success("✅ Tickets processed!")
+                        st.error("Failed to scrape guides")
+                        st.stop()
+                    
+                    status.write("✅ Guides scraped!")
+                    
+                    # Step 2: Check for new guides
+                    status.write("🔍 Step 2/4: Checking for new guides...")
+                    from config.settings import GUIDES_COMBINED_FILE, GUIDES_CHUNKS_FILE
+                    import json
+                    
+                    # Load existing guides (if any)
+                    existing_guide_urls = set()
+                    if GUIDES_COMBINED_FILE.exists():
+                        try:
+                            with open(GUIDES_COMBINED_FILE, 'r', encoding='utf-8') as f:
+                                existing_guides = json.load(f)
+                                existing_guide_urls = {g.get('url', '') for g in existing_guides if g.get('url')}
+                        except:
+                            pass
+                    
+                    # Load newly scraped guides
+                    new_guides = []
+                    if GUIDES_COMBINED_FILE.exists():
+                        with open(GUIDES_COMBINED_FILE, 'r', encoding='utf-8') as f:
+                            new_guides = json.load(f)
+                    
+                    new_guide_urls = {g.get('url', '') for g in new_guides if g.get('url')}
+                    new_count = len(new_guide_urls - existing_guide_urls)
+                    
+                    if new_count > 0:
+                        status.write(f"✅ Found {new_count} new guide(s)!")
                     else:
-                        st.error(f"Error: {result.stderr}")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        
-        st.markdown("---")
-        
-        # Quick Update Section (Incremental)
-        st.markdown("#### ⚡ **Quick Updates (Incremental)**")
-        st.markdown("*Fast incremental updates - only processes new/changed items*")
-        
-        # Update Tickets Only (Fast)
-        if st.button("📋 Update Tickets Only (Fast)", use_container_width=True):
-            run_fast_update("scripts/update_tickets_only.py")
-        
-        # Update Guides Only (Fast)
-        if st.button("📘 Update Guides Only (Fast)", use_container_width=True):
-            run_fast_update("scripts/update_guides_incremental.py")
-        
-        # Update All (Fast)
-        if st.button("🔄 Update All (Fast)", use_container_width=True):
-            run_fast_update("scripts/update_tickets_only.py")
-            run_fast_update("scripts/update_guides_incremental.py")
-        
-        st.markdown("---")
-        
-        # Full Rebuild (for emergencies)
-        st.markdown("#### 🔨 **Full Rebuild**")
-        st.markdown("*Complete database recreation (2-5 min)*")
-        
-        if st.button("🔨 Full Rebuild", use_container_width=True):
-            with st.status("Rebuilding database...", expanded=True) as status:
-                try:
-                    result = subprocess.run(
-                        [sys.executable, "scripts/rebuild_vector_db_v2.py"],
+                        status.write("ℹ️  No new guides found (all already exist)")
+                    
+                    # Step 3: Chunk guides (always regenerate chunks to catch updates)
+                    status.write("✂️  Step 3/4: Chunking guides...")
+                    chunk_process = subprocess.run(
+                        [sys.executable, "-m", "src.phase1.semantic_chunker"],
                         cwd=project_root,
-                        capture_output=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
                         text=True,
-                        timeout=600
+                        timeout=60
                     )
                     
-                    if result.returncode == 0:
-                        status.update(label="✅ Database rebuilt!", state="complete")
-                        st.cache_resource.clear()
+                    for line in chunk_process.stdout.split('\n'):
+                        if line.strip():
+                            status.write(line.strip())
+                    
+                    if chunk_process.returncode != 0:
+                        status.update(label="❌ Chunking failed", state="error")
+                        st.error("Failed to chunk guides")
+                        st.code(chunk_process.stdout)
+                        st.stop()
+                    
+                    status.write("✅ Guides chunked!")
+                    
+                    # Step 4: Update embeddings (incremental - only new chunks)
+                    status.write("🔍 Step 4/4: Updating embeddings (only new chunks)...")
+                    update_process = subprocess.run(
+                        [sys.executable, "scripts/update_guides_incremental.py"],
+                        cwd=project_root,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=300
+                    )
+                    
+                    for line in update_process.stdout.split('\n'):
+                        if line.strip():
+                            status.write(line.strip())
+                    
+                    if update_process.returncode == 0:
+                        status.update(label="✅ Complete! Guides updated", state="complete")
+                        # Refresh stats
+                        try:
+                            st.session_state.stats = st.session_state.pipeline.get_stats()
+                        except:
+                            pass
+                        if new_count > 0:
+                            st.success(f"🎉 Successfully processed **{new_count}** new guide(s)!")
+                        else:
+                            st.info("ℹ️  Guides refreshed (no new guides found)")
+                        st.balloons()
                         time.sleep(1)
                         st.rerun()
                     else:
-                        status.update(label="❌ Rebuild failed", state="error")
-                        st.error(result.stderr)
+                        status.update(label="❌ Update failed", state="error")
+                        st.error("Failed to update guide embeddings")
+                        st.code(update_process.stdout)
+                        
                 except Exception as e:
+                    status.update(label="❌ Error", state="error")
                     st.error(f"Error: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+    
+    with col2:
+        # Quick Update Guides (without scraping)
+        st.markdown("#### ⚡ **Update Guides**")
+        st.markdown("*Chunk and update embeddings (no scraping)*")
+        st.caption("Use when guides.json was manually edited")
         
-        st.markdown("---")
-        
-        # Database Info
-        st.markdown("#### 📊 **Database Info**")
-        
-        info_col1, info_col2 = st.columns(2)
-        with info_col1:
-            st.markdown(f"""
-            <div class="stat-box">
-                <div class="stat-value">{st.session_state.stats['tickets']}</div>
-                <div class="stat-label">Tickets</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with info_col2:
-                        st.markdown(f"""
-            <div class="stat-box">
-                <div class="stat-value">{st.session_state.stats['guides']}</div>
-                <div class="stat-label">Guide Chunks</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+        if st.button("📘 Update Guides (Fast)", use_container_width=True):
+            with st.status("Updating guides...", expanded=True) as status:
+                try:
+                    # Step 1: Chunk guides (in case guides.json was updated)
+                    status.write("✂️  Step 1/2: Chunking guides...")
+                    chunk_process = subprocess.run(
+                        [sys.executable, "-m", "src.phase1.semantic_chunker"],
+                        cwd=project_root,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=60
+                    )
+                    
+                    for line in chunk_process.stdout.split('\n'):
+                        if line.strip():
+                            status.write(line.strip())
+                    
+                    if chunk_process.returncode != 0:
+                        status.update(label="❌ Chunking failed", state="error")
+                        st.error("Failed to chunk guides")
+                        st.code(chunk_process.stdout)
+                        st.stop()
+                    
+                    status.write("✅ Guides chunked!")
+                    
+                    # Step 2: Update embeddings (incremental - only new chunks)
+                    status.write("🔍 Step 2/2: Updating embeddings (only new chunks)...")
+                    update_process = subprocess.run(
+                        [sys.executable, "scripts/update_guides_incremental.py"],
+                        cwd=project_root,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=300
+                    )
+                    
+                    for line in update_process.stdout.split('\n'):
+                        if line.strip():
+                            status.write(line.strip())
+                    
+                    if update_process.returncode == 0:
+                        status.update(label="✅ Complete! Guides updated", state="complete")
+                        # Refresh stats
+                        try:
+                            st.session_state.stats = st.session_state.pipeline.get_stats()
+                        except:
+                            pass
+                        st.success("🎉 Guides updated successfully!")
+                        st.balloons()
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        status.update(label="❌ Update failed", state="error")
+                        st.error("Failed to update guide embeddings")
+                        st.code(update_process.stdout)
+                        
+                except Exception as e:
+                    status.update(label="❌ Error", state="error")
+                    st.error(f"Error: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+    
+    st.markdown("---")
+    
+    # Full Rebuild (for emergencies)
+    st.markdown("#### 🔨 **Full Rebuild**")
+    st.markdown("*Complete database recreation (use only if needed)*")
+    
+    if st.button("🔨 Full Rebuild", use_container_width=True):
+        with st.status("Rebuilding database...", expanded=True) as status:
+            try:
+                result = subprocess.run(
+                    [sys.executable, "scripts/rebuild_vector_db_v2.py"],
+                    cwd=project_root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=600
+                )
+                
+                for line in result.stdout.split('\n'):
+                    if line.strip():
+                        status.write(line.strip())
+                
+                if result.returncode == 0:
+                    status.update(label="✅ Database rebuilt!", state="complete")
+                    st.cache_resource.clear()
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    status.update(label="❌ Rebuild failed", state="error")
+                    st.error(result.stdout)
+            except Exception as e:
+                st.error(f"Error: {e}")
+    
+    st.markdown("---")
+    
+    # Database Info
+    st.markdown("#### 📊 **Database Info**")
+    
+    info_col1, info_col2 = st.columns(2)
+    with info_col1:
+        st.markdown(f"""
+        <div class="stat-box">
+            <div class="stat-value">{st.session_state.stats['tickets']}</div>
+            <div class="stat-label">Tickets</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with info_col2:
+        st.markdown(f"""
+        <div class="stat-box">
+            <div class="stat-value">{st.session_state.stats['guides']}</div>
+            <div class="stat-label">Guide Chunks</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")

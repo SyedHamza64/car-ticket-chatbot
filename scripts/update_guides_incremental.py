@@ -81,9 +81,36 @@ def main():
     new_map = {c["chunk_id"]: c for c in chunks}
     new_ids = set(new_map.keys())
 
-    # Get existing Chroma IDs
-    existing = db.guides_coll.get()
-    existing_ids = set(existing["ids"])
+    # Get existing Chroma IDs and documents (handle both rag_v2 and separate collections)
+    existing_ids = set()
+    existing_docs_map = {}
+    
+    if db.rag_v2_coll:
+        # Use unified collection - get all guide chunk IDs
+        try:
+            existing_data = db.rag_v2_coll.get(where={"type": "guide_chunk"}, limit=None)
+            existing_ids = set(existing_data.get("ids", []))
+            existing_docs = existing_data.get("documents", [])
+            existing_docs_map = {
+                existing_data["ids"][i]: existing_docs[i]
+                for i in range(len(existing_data["ids"]))
+            }
+        except Exception:
+            # Fallback: get all and filter
+            all_data = db.rag_v2_coll.get(limit=None)
+            ids = all_data.get("ids", [])
+            docs = all_data.get("documents", [])
+            metas = all_data.get("metadatas", [])
+            guide_indices = [i for i, meta in enumerate(metas) if meta and meta.get("type") == "guide_chunk"]
+            existing_ids = {ids[i] for i in guide_indices}
+            existing_docs_map = {ids[i]: docs[i] for i in guide_indices}
+    elif db.guides_coll:
+        existing = db.guides_coll.get()
+        existing_ids = set(existing["ids"])
+        existing_docs_map = {
+            existing["ids"][i]: existing["documents"][i]
+            for i in range(len(existing["ids"]))
+        }
 
     to_add = []
     to_add_texts = []
@@ -96,11 +123,6 @@ def main():
     to_delete = list(existing_ids - new_ids)
 
     logger.info("Checking for new/updated chunks...")
-
-    existing_docs_map = {
-        existing["ids"][i]: existing["documents"][i]
-        for i in range(len(existing["ids"]))
-    }
 
     for cid, chunk in tqdm(new_map.items()):
         text = chunk["chunk_text"].strip()
@@ -133,17 +155,28 @@ def main():
     # APPLY OPERATIONS
     # -------------------------------
 
+    # Get collection to use
+    target_coll = db.rag_v2_coll if db.rag_v2_coll else db.guides_coll
+    if not target_coll:
+        raise ValueError("No collection available to update guides")
+    
+    # Add metadata type for unified collection
+    for meta in to_add_meta:
+        meta["type"] = "guide_chunk"
+    for meta in to_update_meta:
+        meta["type"] = "guide_chunk"
+    
     # Delete removed chunks
     if to_delete:
         logger.info("Deleting removed guide chunks...")
-        db.guides_coll.delete(ids=list(to_delete))
+        target_coll.delete(ids=list(to_delete))
 
     # Add new
     if to_add:
         logger.info("Embedding new chunks...")
         emb = db.embed_batch(to_add_texts)
 
-        db.guides_coll.add(
+        target_coll.add(
             ids=to_add,
             documents=to_add_texts,
             embeddings=emb,
@@ -156,9 +189,9 @@ def main():
         emb = db.embed_batch(to_update_texts)
 
         # Delete old
-        db.guides_coll.delete(ids=to_update)
+        target_coll.delete(ids=to_update)
         # Add fresh versions
-        db.guides_coll.add(
+        target_coll.add(
             ids=to_update,
             documents=to_update_texts,
             embeddings=emb,
@@ -167,11 +200,33 @@ def main():
 
     # REBUILD BM25 INDEX (recommended)
     logger.info("Rebuilding BM25 index (full)...")
-    new_all = db.guides_coll.get()
+    if db.rag_v2_coll:
+        # Get all guide chunks from unified collection
+        try:
+            new_all = db.rag_v2_coll.get(where={"type": "guide_chunk"}, limit=None)
+        except:
+            # Fallback
+            all_data = db.rag_v2_coll.get(limit=None)
+            ids = all_data.get("ids", [])
+            docs = all_data.get("documents", [])
+            metas = all_data.get("metadatas", [])
+            guide_indices = [i for i, meta in enumerate(metas) if meta and meta.get("type") == "guide_chunk"]
+            new_all = {
+                "ids": [ids[i] for i in guide_indices],
+                "documents": [docs[i] for i in guide_indices]
+            }
+    else:
+        new_all = db.guides_coll.get()
+    
     bm25, ids = rebuild_bm25_index(new_all["documents"], new_all["ids"])
 
+    # Save in dictionary format (same as rebuild_vector_db_v2.py and update_tickets_only.py)
     with open(BM25_INDEX_PATH, "wb") as f:
-        pickle.dump((bm25, ids), f)
+        pickle.dump({
+            "bm25": bm25,
+            "ids": ids,
+            "docs": new_all["documents"]
+        }, f)
 
     logger.info("Guide update complete!")
 

@@ -4,47 +4,23 @@ AI-powered support assistant for LaCuraDellAuto customer service team using RAG 
 
 ## Overview
 
-This system helps support agents draft accurate, on-brand customer responses by:
-- Learning from 2,590 historical Zendesk tickets
-- Referencing 15 official LCDA technical guides (83 sections)
+This system helps support agents provide accurate, on-brand customer responses by:
+- Learning from historical Zendesk support tickets
+- Referencing official LCDA technical guides
 - Maintaining brand tone and consistency
-- Generating multiple draft variations for operator selection
+- Extracting product recommendations with links
+- Providing step-by-step procedures
 
-## Project Structure (Runtime Branch)
+## Features
 
-```
-chat-bot-ticket/
-├── streamlit_app.py       # Main web interface
-├── requirements.txt       # Python dependencies
-├── .env.example          # Environment configuration template
-├── .gitignore            # Git ignore rules
-├── config/
-│   └── settings.py        # Configuration settings
-├── src/
-│   ├── phase4/
-│   │   ├── vector_db.py            # ChromaDB utility (for update scripts)
-│   │   └── rag_pipeline_langchain.py  # LangChain RAG pipeline
-│   └── utils/
-│       ├── logger.py               # Logging utilities
-│       └── model_checker.py        # Model validation
-├── scripts/
-│   └── run_streamlit.py            # Streamlit launcher
-└── data/                           # Data files (excluded from git)
-    ├── processed/                  # Processed tickets (required)
-    ├── guides/                     # Scraped guides (required)
-    └── chroma/                     # Vector database (required)
-```
-
-> **For setup tools and development:** See the `setup` branch which includes:
-> - Data processing scripts (`src/phase2/`, `src/phase3/`)
-> - Database setup (`src/phase4/populate_vector_db.py`)
-> - Tests (`tests/`)
-> - Diagnostics (`diagnostics/`)
-> - Additional documentation (`docs/`)
+- **Fast Response Time**: 2-3 seconds (fast mode) or 10-12 seconds (full quality mode)
+- **Multiple LLM Providers**: Support for Groq, Gemini, and Ollama
+- **Hybrid Search**: Combines semantic (dense) and keyword (sparse) retrieval
+- **Product Link Extraction**: Automatically extracts and includes product URLs
+- **Incremental Updates**: Fast updates for new tickets and guides
+- **Modern UI**: Clean Streamlit interface with dark/light theme
 
 ## Quick Start
-
-> **Note:** This is the **runtime-only** branch. For setup tools, data processing, and development tools, see the `setup` branch.
 
 ### 1. Install Dependencies
 
@@ -52,177 +28,184 @@ chat-bot-ticket/
 pip install -r requirements.txt
 ```
 
-### 2. Install Ollama (Local LLM)
+### 2. Configure Environment
 
-Download and install Ollama from: https://ollama.ai/
+Create a `.env` file in the root directory:
 
-Pull the recommended model:
-```bash
-ollama pull gemma2:2b
+```env
+# LLM Provider (choose at least one)
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=llama-3.3-70b-versatile
+
+# OR
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=models/gemini-2.5-flash
+
+# OR (for local LLM)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=mistral:7b-instruct
+
+# Embedding Model (local, no API key needed)
+LOCAL_EMBEDDING_MODEL=sentence-transformers/all-mpnet-base-v2
+
+# Optional: Enable GPU if available
+USE_CUDA=false
+
+# Logging
+LOG_LEVEL=INFO
 ```
 
-### 3. Prepare Data
+### 3. Prepare Data Files
 
-**Prerequisites:**
-- Processed tickets file: `data/processed/processed_tickets.json`
-- Guides file: `data/guides/guides.json`
-- Vector database: `data/chroma/` (populated)
+Ensure these files exist:
+- `data/processed/processed_tickets.json` - Processed support tickets
+- `data/guides/guides.json` - Scraped product guides  
+- `data/chroma/` - ChromaDB vector database (populated)
+- `data/bm25_index.pkl` - BM25 sparse index
 
-> **To set up data:** Switch to the `setup` branch and run the setup scripts.
+**To set up data from scratch:**
+1. Process tickets: `python -m src.phase2.process_tickets`
+2. Scrape guides: `python -m src.phase3.scrape_guides_fast`
+3. Chunk guides: `python -m src.phase1.semantic_chunker`
+4. Build database: `python scripts/rebuild_vector_db_v2.py`
 
-### 4. Launch the Application
+### 4. Launch Application
 
-```bash
-python scripts/run_streamlit.py
-```
-
-Or directly:
 ```bash
 streamlit run streamlit_app.py --server.port 8501
 ```
 
-Access the app at: http://localhost:8501
+Access at: `http://localhost:8501`
 
-## Features
+## Project Structure
 
-### Multi-Draft Generation
-- Generate 1-3 draft responses simultaneously
-- Varying creativity levels (Conservative, Balanced, Creative)
-- Select the best draft for your needs
+```
+chat-bot-ticket/
+├── streamlit_app.py              # Main web interface
+├── requirements.txt              # Python dependencies
+├── .env                         # Environment variables (not in git)
+├── .gitignore                   # Git ignore rules
+├── README.md                    # This file
+├── DEPLOYMENT.md                # Production deployment guide
+├── config/
+│   └── settings.py              # Configuration settings
+├── src/
+│   ├── phase1/
+│   │   └── semantic_chunker.py  # Guide chunking
+│   ├── phase2/
+│   │   └── process_tickets.py   # Ticket processing
+│   ├── phase3/
+│   │   └── scrape_guides_fast.py # Guide scraping
+│   ├── phase4/
+│   │   ├── rag_pipeline_langchain.py  # Main RAG pipeline
+│   │   └── vector_db.py         # Vector database manager
+│   └── utils/
+│       ├── logger.py            # Logging utilities
+│       └── model_checker.py     # Model validation
+├── scripts/
+│   ├── rebuild_vector_db_v2.py  # Full database rebuild
+│   ├── update_tickets_only.py   # Incremental ticket updates
+│   ├── update_guides_incremental.py  # Incremental guide updates
+│   └── import_new_tickets.py    # Import new tickets
+└── data/                        # Data files (excluded from git)
+    ├── processed/               # Processed tickets
+    ├── guides/                  # Scraped guides
+    ├── chroma/                  # ChromaDB vector database
+    └── bm25_index.pkl          # BM25 sparse index
+```
 
-### Smart Caching
-- Instant responses for common queries
-- 24-hour cache TTL
-- Automatic cache management
+## Usage
 
-### Configurable Retrieval
-- Adjust number of relevant tickets (1-5)
-- Adjust number of relevant guides (1-5)
-- Real-time context preview
+### Adding New Tickets
 
-### Response Time Tracking
-- View generation time for each response
-- Performance metrics in sidebar
-- Cache hit indicators
+1. Upload NDJSON file via Streamlit interface (Manage Knowledge Base tab)
+2. Click "🚀 Process & Update Knowledge Base"
+3. System automatically processes and indexes new tickets
 
-### Model Selection
-- `gemma2:2b` - Fast (8s single draft, ~13s for 3 drafts)
-- `qwen2.5:7b-instruct` - Balanced quality
-- `llama3.1:8b` - Alternative option
-- `qwen2.5:14b` - High quality (slower)
+### Updating Guides
+
+1. Click "🔄 Refresh Guides" in Streamlit
+2. System scrapes latest guides from website
+3. Automatically chunks and indexes new content
+
+### Querying
+
+1. Enter customer question in the main interface
+2. Select number of tickets/guides to retrieve
+3. Choose AI provider (Groq/Gemini/Ollama)
+4. Click "✨ Generate Response"
+5. Review answer with sources
 
 ## Configuration
 
-The `.env` file in the root directory contains:
+### LLM Providers
 
-```env
-# Data paths
-DATA_DIR=./data
-RAW_DATA_DIR=./data/raw
-PROCESSED_DATA_DIR=./data/processed
-GUIDES_DATA_DIR=./data/guides
+**Groq (Recommended - Fast)**
+- Fast inference (1-2 seconds)
+- Free tier available
+- Model: `llama-3.3-70b-versatile`
 
-# Ollama settings
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma2:2b
+**Gemini (Google)**
+- Good quality
+- Free tier available
+- Model: `models/gemini-2.5-flash`
 
-# Embedding model
-EMBEDDING_MODEL=all-MiniLM-L6-v2
+**Ollama (Local)**
+- No API costs
+- Requires local setup
+- Slower but private
 
-# Logging
-LOG_LEVEL=INFO
-LOG_FILE=./logs/app.log
-```
+### Performance Modes
 
-## Data Management
+**Fast Mode (Default)**
+- Response time: 2-3 seconds
+- Dense retrieval only
+- Good quality for most queries
 
-> **Note:** This branch is runtime-only. To process new tickets or update guides, switch to the `setup` branch.
-
-### Switching to Setup Branch
-
-```bash
-git checkout setup
-```
-
-The `setup` branch contains:
-- Ticket processing scripts (`src/phase2/`)
-- Guide scraping tools (`src/phase3/`)
-- Database setup scripts (`scripts/run_phase4_setup.py`)
-- Tests and diagnostics
-- Additional documentation
-
-## Testing
-
-Run all tests:
-```bash
-pytest tests/ -v
-```
-
-Run with coverage:
-```bash
-pytest tests/ --cov=src --cov-report=html
-```
-
-## How It Works
-
-1. **User Query**: Operator pastes customer question
-2. **Embedding**: Query is converted to vector embedding
-3. **Retrieval**: ChromaDB finds relevant tickets & guides
-4. **Context**: Retrieved content is formatted as context
-5. **Prompt**: System prompt + context + query assembled
-6. **Generation**: Local LLM generates response(s)
-7. **Display**: Operator reviews and selects best draft
-
-## Performance
-
-- **Single Draft**: ~8 seconds (gemma2:2b)
-- **3 Drafts (Parallel)**: ~13 seconds (gemma2:2b)
-- **Cache Hit**: <0.01 seconds (instant)
-- **Knowledge Base**: 19 tickets + 83 guide sections
+**Full Mode**
+- Response time: 10-12 seconds
+- Hybrid search + reranking
+- Best quality for complex queries
 
 ## Technology Stack
 
 - **Frontend**: Streamlit
-- **LLM**: Ollama (local inference)
+- **LLM**: Groq API / Gemini API / Ollama (local)
 - **Vector DB**: ChromaDB
-- **Embeddings**: sentence-transformers (all-MiniLM-L6-v2)
+- **Embeddings**: sentence-transformers (HuggingFace)
+- **Sparse Search**: BM25
+- **Reranking**: CrossEncoder (optional)
 - **Language**: Python 3.8+
-- **Web Scraping**: aiohttp, cloudscraper, BeautifulSoup4
 
 ## Troubleshooting
 
-### Streamlit won't start
-```bash
-# Check if port 8501 is in use
-netstat -ano | findstr :8501
+### API Errors
+- Verify API keys in `.env` file
+- Check API provider status
+- Ensure sufficient API quota
 
-# Kill the process if needed (replace PID)
-taskkill /PID <PID> /F
-```
+### Slow Performance
+- Enable fast_mode (default)
+- Reduce number of retrieved documents
+- Check internet connection for API calls
 
-### Model not found
-```bash
-# Check available models
-ollama list
+### Database Issues
+- Verify ChromaDB files exist in `data/chroma/`
+- Check BM25 index exists: `data/bm25_index.pkl`
+- Rebuild database if corrupted: Use "Full Rebuild" button
 
-# Pull missing model
-ollama pull gemma2:2b
-```
+### CUDA Out of Memory
+- Set `USE_CUDA=false` in `.env`
+- System will use CPU (slower but stable)
 
-### ChromaDB errors
-```bash
-# Delete and recreate database
-rm -rf data/chroma/*
-python scripts/run_phase4_setup.py
-```
+## Production Deployment
 
-## Project Status
-
-- Knowledge base: 15 guides (83 sections) + 2,590 tickets
-- Response time: 8-13 seconds (3 drafts)
-- Multi-draft generation: Active
-- Caching: Active
-- Production ready: Yes
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed production deployment instructions including:
+- Docker setup
+- VPS deployment
+- Streamlit Cloud
+- Systemd service configuration
+- Nginx reverse proxy
 
 ## License
 

@@ -34,12 +34,33 @@ class TicketProcessor:
         return self.tickets
     
     def clean_html(self, html_text: str) -> str:
-        """Remove HTML tags and clean text."""
+        """Remove HTML tags and clean text, but preserve URLs from links."""
         if not html_text:
             return ""
         
-        # Parse HTML and extract text
+        # Parse HTML
         soup = BeautifulSoup(html_text, 'html.parser')
+        
+        # Extract URLs from <a> tags and append them to the link text
+        for link in soup.find_all('a', href=True):
+            href = link.get('href', '')
+            link_text = link.get_text(strip=True)
+            
+            # If it's a product URL, preserve it
+            if href.startswith('http') and 'lacuradellauto.it' in href:
+                # Replace link with: "Link Text (URL)"
+                if link_text:
+                    link.replace_with(f"{link_text} ({href})")
+                else:
+                    link.replace_with(href)
+            elif href.startswith('http'):
+                # For other URLs, also preserve them
+                if link_text:
+                    link.replace_with(f"{link_text} ({href})")
+                else:
+                    link.replace_with(href)
+        
+        # Now extract text
         text = soup.get_text(separator=' ', strip=True)
         
         # Clean up whitespace
@@ -163,7 +184,7 @@ class TicketProcessor:
                 processed['searchable_text'] = self.create_searchable_text(processed)
                 self.processed_tickets.append(processed)
                 
-                if i % 5 == 0:
+                if i % 50 == 0 or i == len(self.tickets):
                     logger.info(f"Processed {i}/{len(self.tickets)} tickets")
             except Exception as e:
                 logger.error(f"Error processing ticket {ticket.get('id', 'unknown')}: {e}")
