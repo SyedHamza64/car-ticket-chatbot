@@ -29,7 +29,7 @@ st.set_page_config(
 
 # Theme toggle in session state
 if 'dark_mode' not in st.session_state:
-    st.session_state.dark_mode = True
+    st.session_state.dark_mode = False  # Default to light mode
 
 # Get current theme
 is_dark = st.session_state.dark_mode
@@ -626,19 +626,15 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Provider Selection
+    # Provider Selection (Groq only in UI, others available in backend)
     provider = st.radio(
         "🔌 **AI Provider**",
-        ["🦙 Ollama (Local)", "⚡ Groq (Cloud)", "✨ Gemini (Google AI)"],
+        ["⚡ Groq (Cloud)"],
         index=0,
-        help="Choose between local Ollama, Groq Cloud, or Google Gemini"
+        help="Fast, cloud-based AI inference"
     )
-    if "Ollama" in provider:
-        provider_name = "ollama"
-    elif "Groq" in provider:
-        provider_name = "grok"
-    else:
-        provider_name = "gemini"
+    # Always use Groq in UI
+    provider_name = "grok"
     
     # Model Selection based on provider
     if provider_name == "grok":
