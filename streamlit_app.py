@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 import sys
 import subprocess
+import markdown
 
 # Add project root to path
 project_root = Path(__file__).parent
@@ -253,37 +254,50 @@ st.markdown("""
     }
     
     /* ALL Buttons - Force dark theme */
-    .stButton > button,
-    button[kind="primary"],
-    button[kind="secondary"],
-    [data-testid="baseButton-primary"],
-    [data-testid="baseButton-secondary"],
-    .stDownloadButton > button,
-    div[data-testid="stFormSubmitButton"] > button {
-        background: linear-gradient(135deg, var(--accent) 0%, #4f46e5 100%) !important;
+    .stButton > button {
+        background: linear-gradient(135deg, var(--accent) 0%, var(--accent-light) 100%) !important;
         color: white !important;
         border: none !important;
+        padding: 0.75rem 1.5rem !important;
         border-radius: 8px !important;
-        padding: 0.6rem 1.25rem !important;
         font-weight: 600 !important;
-        font-size: 0.9rem !important;
         transition: all 0.2s ease !important;
-        box-shadow: 0 2px 10px var(--accent-glow) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
     }
     
-    .stButton > button:hover,
-    button[kind="primary"]:hover,
-    button[kind="secondary"]:hover,
-    [data-testid="baseButton-primary"]:hover,
-    [data-testid="baseButton-secondary"]:hover {
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 20px var(--accent-glow) !important;
-        background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%) !important;
-        color: white !important;
+    .stButton > button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15) !important;
     }
     
     .stButton > button:active {
-        transform: translateY(0) !important;
+        transform: scale(0.98) !important;
+    }
+    
+    /* Response box with blue border */
+    .response-box {
+        background: var(--response-bg);
+        border: 2px solid var(--response-border);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    
+    .response-box p {
+        color: var(--response-text) !important;
+        line-height: 1.6;
+        margin-bottom: 0.5rem;
+    }
+    
+    .response-box a {
+        color: var(--accent) !important;
+        text-decoration: underline;
+        font-weight: 500;
+    }
+    
+    .response-box a:hover {
+        color: var(--accent-light) !important;
     }
     
     .stButton > button:focus,
@@ -771,14 +785,12 @@ with tab_query:
     )
 
     # Options row
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+    col1, col2, col3 = st.columns([1.5, 1.5, 3])
     with col1:
-        n_tickets = st.selectbox("📋 Tickets", [1, 2, 3, 4, 5], index=2, label_visibility="collapsed")
+        n_tickets = st.selectbox("📋 Ticket Sources", [1, 2, 3, 4, 5], index=4, help="Number of relevant tickets to retrieve")
     with col2:
-        n_guides = st.selectbox("📚 Guides", [1, 2, 3, 4, 5], index=2, label_visibility="collapsed")
+        n_guides = st.selectbox("📚 Guide Sources", [1, 2, 3, 4, 5], index=2, help="Number of relevant guide sections to retrieve")
     with col3:
-        num_drafts = st.selectbox("📝 Drafts", [1, 2, 3], index=0, label_visibility="collapsed")
-    with col4:
         generate_btn = st.button("✨ Generate Response", type="primary", use_container_width=True)
             
     # Generate response
@@ -832,14 +844,11 @@ with tab_query:
                     </div>
                     """, unsafe_allow_html=True)
         else:
-            # Single response - render markdown with proper link support
-            # Use Streamlit's markdown renderer which handles links automatically
-            st.markdown("""
+            # Single response - convert markdown to HTML and wrap in response-box
+            response_html = markdown.markdown(st.session_state.current_response)
+            st.markdown(f"""
             <div class="response-box">
-            """, unsafe_allow_html=True)
-            # Render markdown - this will make [text](url) links clickable
-            st.markdown(st.session_state.current_response)
-            st.markdown("""
+                {response_html}
             </div>
             """, unsafe_allow_html=True)
         
