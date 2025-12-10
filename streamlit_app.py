@@ -1328,202 +1328,139 @@ with tab_manage:
             with st.expander("🔍 Error Details", expanded=False):
                 st.code(traceback.format_exc())
     
+    
     st.markdown("---")
     
-    # Simplified right column - only essential actions
-    col1, col2 = st.columns(2, gap="large")
+    # Refresh Guides Section
+    st.markdown("#### 🌐 **Refresh Guides**")
+    st.markdown("*Scrape latest guides from website, chunk, and update embeddings*")
     
-    with col1:
-        # Refresh Guides
-        st.markdown("#### 🌐 **Refresh Guides**")
-        st.markdown("*Scrape, chunk, and update guide embeddings*")
-        
-        if st.button("🔄 Scrape Guides", use_container_width=True):
-            with st.status("Processing guides...", expanded=True) as status:
-                try:
-                    # Step 1: Scrape guides
-                    status.write("📥 Step 1/4: Scraping guides from website...")
-                    process = subprocess.Popen(
-                        [sys.executable, "-m", "src.phase3.scrape_guides_fast"],
-                        cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True
-                    )
-                    
-                    for line in process.stdout:
-                        if line.strip():
-                            status.write(line.strip())
-                    
-                    process.wait(timeout=120)
-                    
-                    if process.returncode != 0:
-                        status.update(label="❌ Scraping failed", state="error")
-                        st.error("Failed to scrape guides")
-                        st.stop()
-                    
-                    status.write("✅ Guides scraped!")
-                    
-                    # Step 2: Check for new guides
-                    status.write("🔍 Step 2/4: Checking for new guides...")
-                    from config.settings import GUIDES_COMBINED_FILE, GUIDES_CHUNKS_FILE
-                    import json
-                    
-                    # Load existing guides (if any)
-                    existing_guide_urls = set()
-                    if GUIDES_COMBINED_FILE.exists():
-                        try:
-                            with open(GUIDES_COMBINED_FILE, 'r', encoding='utf-8') as f:
-                                existing_guides = json.load(f)
-                                existing_guide_urls = {g.get('url', '') for g in existing_guides if g.get('url')}
-                        except:
-                            pass
-                    
-                    # Load newly scraped guides
-                    new_guides = []
-                    if GUIDES_COMBINED_FILE.exists():
+    if st.button("🔄 Refresh Guides", use_container_width=True):
+        with st.status("Processing guides...", expanded=True) as status:
+            try:
+                # Step 1: Scrape guides
+                status.write("📥 Step 1/4: Scraping guides from website...")
+                process = subprocess.Popen(
+                    [sys.executable, "-m", "src.phase3.scrape_guides_fast"],
+                    cwd=project_root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
+                
+                for line in process.stdout:
+                    if line.strip():
+                        status.write(line.strip())
+                
+                process.wait(timeout=120)
+                
+                if process.returncode != 0:
+                    status.update(label="❌ Scraping failed", state="error")
+                    st.error("Failed to scrape guides")
+                    st.stop()
+                
+                status.write("✅ Guides scraped!")
+                
+                # Step 2: Check for new guides
+                status.write("🔍 Step 2/4: Checking for new guides...")
+                from config.settings import GUIDES_COMBINED_FILE, GUIDES_CHUNKS_FILE
+                import json
+                
+                # Load existing guides (if any)
+                existing_guide_urls = set()
+                if GUIDES_COMBINED_FILE.exists():
+                    try:
                         with open(GUIDES_COMBINED_FILE, 'r', encoding='utf-8') as f:
-                            new_guides = json.load(f)
-                    
-                    new_guide_urls = {g.get('url', '') for g in new_guides if g.get('url')}
-                    new_count = len(new_guide_urls - existing_guide_urls)
-                    
+                            existing_guides = json.load(f)
+                            existing_guide_urls = {g.get('url', '') for g in existing_guides if g.get('url')}
+                    except:
+                        pass
+                
+                # Load newly scraped guides
+                new_guides = []
+                if GUIDES_COMBINED_FILE.exists():
+                    with open(GUIDES_COMBINED_FILE, 'r', encoding='utf-8') as f:
+                        new_guides = json.load(f)
+                
+                new_guide_urls = {g.get('url', '') for g in new_guides if g.get('url')}
+                new_count = len(new_guide_urls - existing_guide_urls)
+                
+                if new_count > 0:
+                    status.write(f"✅ Found {new_count} new guide(s)!")
+                else:
+                    status.write("ℹ️  No new guides found (all already exist)")
+                
+                # Step 3: Chunk guides (always regenerate chunks to catch updates)
+                status.write("✂️  Step 3/4: Chunking guides...")
+                chunk_process = subprocess.run(
+                    [sys.executable, "-m", "src.phase1.semantic_chunker"],
+                    cwd=project_root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=60
+                )
+                
+                for line in chunk_process.stdout.split('\n'):
+                    if line.strip():
+                        status.write(line.strip())
+                
+                if chunk_process.returncode != 0:
+                    status.update(label="❌ Chunking failed", state="error")
+                    st.error("Failed to chunk guides")
+                    st.code(chunk_process.stdout)
+                    st.stop()
+                
+                status.write("✅ Guides chunked!")
+                
+                # Step 4: Update embeddings (incremental - only new chunks)
+                status.write("🔍 Step 4/4: Updating embeddings (only new chunks)...")
+                update_process = subprocess.run(
+                    [sys.executable, "scripts/update_guides_incremental.py"],
+                    cwd=project_root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=300
+                )
+                
+                for line in update_process.stdout.split('\n'):
+                    if line.strip():
+                        status.write(line.strip())
+                
+                if update_process.returncode == 0:
+                    status.update(label="✅ Complete! Guides updated", state="complete")
+                    # Refresh stats
+                    try:
+                        st.session_state.stats = st.session_state.pipeline.get_stats()
+                    except:
+                        pass
                     if new_count > 0:
-                        status.write(f"✅ Found {new_count} new guide(s)!")
+                        st.success(f"🎉 Successfully processed **{new_count}** new guide(s)!")
                     else:
-                        status.write("ℹ️  No new guides found (all already exist)")
+                        st.info("ℹ️  Guides refreshed (no new guides found)")
+                    st.balloons()
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    status.update(label="❌ Update failed", state="error")
+                    st.error("Failed to update guide embeddings")
+                    st.code(update_process.stdout)
                     
-                    # Step 3: Chunk guides (always regenerate chunks to catch updates)
-                    status.write("✂️  Step 3/4: Chunking guides...")
-                    chunk_process = subprocess.run(
-                        [sys.executable, "-m", "src.phase1.semantic_chunker"],
-                        cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=60
-                    )
-                    
-                    for line in chunk_process.stdout.split('\n'):
-                        if line.strip():
-                            status.write(line.strip())
-                    
-                    if chunk_process.returncode != 0:
-                        status.update(label="❌ Chunking failed", state="error")
-                        st.error("Failed to chunk guides")
-                        st.code(chunk_process.stdout)
-                        st.stop()
-                    
-                    status.write("✅ Guides chunked!")
-                    
-                    # Step 4: Update embeddings (incremental - only new chunks)
-                    status.write("🔍 Step 4/4: Updating embeddings (only new chunks)...")
-                    update_process = subprocess.run(
-                        [sys.executable, "scripts/update_guides_incremental.py"],
-                        cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=300
-                    )
-                    
-                    for line in update_process.stdout.split('\n'):
-                        if line.strip():
-                            status.write(line.strip())
-                    
-                    if update_process.returncode == 0:
-                        status.update(label="✅ Complete! Guides updated", state="complete")
-                        # Refresh stats
-                        try:
-                            st.session_state.stats = st.session_state.pipeline.get_stats()
-                        except:
-                            pass
-                        if new_count > 0:
-                            st.success(f"🎉 Successfully processed **{new_count}** new guide(s)!")
-                        else:
-                            st.info("ℹ️  Guides refreshed (no new guides found)")
-                        st.balloons()
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        status.update(label="❌ Update failed", state="error")
-                        st.error("Failed to update guide embeddings")
-                        st.code(update_process.stdout)
-                        
-                except Exception as e:
-                    status.update(label="❌ Error", state="error")
-                    st.error(f"Error: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
+            except Exception as e:
+                status.update(label="❌ Error", state="error")
+                st.error(f"Error: {e}")
+                import traceback
+                st.code(traceback.format_exc())
     
-    with col2:
-        # Quick Update Guides (without scraping)
-        st.markdown("#### ⚡ **Update Guides**")
-        st.markdown("*Chunk and update embeddings (no scraping)*")
-        st.caption("Use when guides.json was manually edited")
-        
-        if st.button("📘 Update Guides (Fast)", use_container_width=True):
-            with st.status("Updating guides...", expanded=True) as status:
-                try:
-                    # Step 1: Chunk guides (in case guides.json was updated)
-                    status.write("✂️  Step 1/2: Chunking guides...")
-                    chunk_process = subprocess.run(
-                        [sys.executable, "-m", "src.phase1.semantic_chunker"],
-                        cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=60
-                    )
-                    
-                    for line in chunk_process.stdout.split('\n'):
-                        if line.strip():
-                            status.write(line.strip())
-                    
-                    if chunk_process.returncode != 0:
-                        status.update(label="❌ Chunking failed", state="error")
-                        st.error("Failed to chunk guides")
-                        st.code(chunk_process.stdout)
-                        st.stop()
-                    
-                    status.write("✅ Guides chunked!")
-                    
-                    # Step 2: Update embeddings (incremental - only new chunks)
-                    status.write("🔍 Step 2/2: Updating embeddings (only new chunks)...")
-                    update_process = subprocess.run(
-                        [sys.executable, "scripts/update_guides_incremental.py"],
-                        cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=300
-                    )
-                    
-                    for line in update_process.stdout.split('\n'):
-                        if line.strip():
-                            status.write(line.strip())
-                    
-                    if update_process.returncode == 0:
-                        status.update(label="✅ Complete! Guides updated", state="complete")
-                        # Refresh stats
-                        try:
-                            st.session_state.stats = st.session_state.pipeline.get_stats()
-                        except:
-                            pass
-                        st.success("🎉 Guides updated successfully!")
-                        st.balloons()
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        status.update(label="❌ Update failed", state="error")
-                        st.error("Failed to update guide embeddings")
-                        st.code(update_process.stdout)
-                        
-                except Exception as e:
-                    status.update(label="❌ Error", state="error")
-                    st.error(f"Error: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
+    # Show last refresh timestamp
+    from config.settings import GUIDES_CHUNKS_FILE
+    if GUIDES_CHUNKS_FILE.exists():
+        import os
+        last_modified = datetime.fromtimestamp(os.path.getmtime(GUIDES_CHUNKS_FILE))
+        st.caption(f"📅 Last refreshed: {last_modified.strftime('%Y-%m-%d %H:%M')}")
+    else:
+        st.caption("📅 Never refreshed")
     
     st.markdown("---")
     
