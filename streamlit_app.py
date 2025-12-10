@@ -1064,6 +1064,15 @@ with tab_manage:
     st.markdown("#### 📤 **Upload Zendesk Export**")
     st.markdown("*Upload raw Zendesk export file (JSON or NDJSON format)*")
     
+    # Show last upload timestamp
+    from config.settings import PROCESSED_TICKETS_FILE
+    if PROCESSED_TICKETS_FILE.exists():
+        import os
+        last_modified = datetime.fromtimestamp(os.path.getmtime(PROCESSED_TICKETS_FILE))
+        st.caption(f"📅 Last uploaded: {last_modified.strftime('%Y-%m-%d %H:%M')}")
+    else:
+        st.caption("📅 No tickets uploaded yet")
+    
     uploaded = st.file_uploader("Upload JSON", type=['json'], label_visibility="collapsed")
     
     if uploaded:
