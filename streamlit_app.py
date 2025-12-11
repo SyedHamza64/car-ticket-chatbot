@@ -483,7 +483,24 @@ st.markdown("""
     [data-testid="stFileUploader"] span,
     [data-testid="stFileUploader"] p,
     [data-testid="stFileUploader"] small,
-    [data-testid="stFileUploader"] div[data-testid="stFileUploaderDropzone"] span {
+    [data-testid="stFileUploader"] div[data-testid="stFileUploaderDropzone"] span,
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInput"] + div span,
+    [data-testid="stFileUploader"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stFileUploadDropzone"] span,
+    [data-testid="stFileUploadDropzone"] p,
+    [data-testid="stFileUploadDropzone"] small {
+        color: var(--text-primary) !important;
+    }
+    
+    /* Uploaded file info - file name and size */
+    [data-testid="stFileUploader"] li span,
+    [data-testid="stFileUploader"] li div,
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] span,
+    [data-testid="stFileUploader"] .uploadedFile span,
+    [data-testid="stFileUploader"] .uploadedFileName,
+    [data-testid="stFileUploader"] .st-emotion-cache-1aehpvj,
+    [data-testid="stFileUploader"] .st-emotion-cache-nahz7x,
+    section[data-testid="stFileUploader"] div:not([data-testid]) span {
         color: var(--text-primary) !important;
     }
     
