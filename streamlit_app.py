@@ -325,12 +325,14 @@ st.markdown("""
         border: 1px solid var(--border) !important;
         border-radius: 8px !important;
         color: var(--text-primary) !important;
+        caret-color: var(--text-primary) !important;
         font-size: 0.95rem !important;
     }
     
     .stTextArea textarea:focus, .stTextInput input:focus {
         border-color: var(--accent) !important;
         box-shadow: 0 0 0 2px var(--accent-glow) !important;
+        caret-color: var(--text-primary) !important;
     }
     
     /* Labels */
@@ -475,6 +477,18 @@ st.markdown("""
     
     [data-testid="stFileUploader"] section {
         background: transparent !important;
+    }
+    
+    /* File uploader text - ensure visibility in both modes */
+    [data-testid="stFileUploader"] span,
+    [data-testid="stFileUploader"] p,
+    [data-testid="stFileUploader"] small,
+    [data-testid="stFileUploader"] div[data-testid="stFileUploaderDropzone"] span {
+        color: var(--text-primary) !important;
+    }
+    
+    [data-testid="stFileUploader"] small {
+        color: var(--text-muted) !important;
     }
     
     [data-testid="stFileUploader"] button {
