@@ -1,15 +1,22 @@
 [server]
 port = 8501
 headless = true
+# Allow external access (needed for VPS deployment)
+address = "0.0.0.0"
+# Increase max upload size for ticket files
+maxUploadSize = 200
 
 [browser]
 gatherUsageStats = false
-serverAddress = "localhost"
+# Set to "localhost" for local dev, "0.0.0.0" for VPS
+serverAddress = "0.0.0.0"
 
 [theme]
-primaryColor = "#3b82f6"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f0f9ff"
-textColor = "#1f2937"
+# Dark theme by default (matches app's dark_mode = True default)
+primaryColor = "#6366f1"
+backgroundColor = "#0a0a0f"
+secondaryBackgroundColor = "#12121a"
+textColor = "#ffffff"
 font = "sans serif"
+
 

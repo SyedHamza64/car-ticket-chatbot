@@ -28,11 +28,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Theme toggle in session state
+# Theme toggle in session state - Initialize ONCE with consistent default
 if 'dark_mode' not in st.session_state:
-    st.session_state.dark_mode = False  # Default to light mode
+    st.session_state.dark_mode = True  # Default to dark mode (consistent)
 
-# Get current theme
+# Get current theme from session state
 is_dark = st.session_state.dark_mode
 
 # Dynamic CSS variables based on theme
@@ -102,9 +102,15 @@ st.markdown("""
         font-family: 'JetBrains Mono', monospace !important;
     }
     
-    /* Main app background */
-    .stApp {
-        background: var(--bg-primary);
+    /* Main app background - Strong override to prevent flash */
+    .stApp, .stApp > div, html, body {
+        background: var(--bg-primary) !important;
+        background-color: var(--bg-primary) !important;
+    }
+    
+    /* Force main content area background */
+    .main, section.main > div {
+        background: var(--bg-primary) !important;
     }
     
     .main .block-container {
@@ -115,9 +121,9 @@ st.markdown("""
     /* Hide Streamlit branding */
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* Sidebar */
+    /* Sidebar - Force background */
     section[data-testid="stSidebar"] {
-        background: var(--bg-secondary);
+        background: var(--bg-secondary) !important;
         border-right: 1px solid var(--border);
     }
     
@@ -590,7 +596,7 @@ if 'initialized' not in st.session_state:
     st.session_state.query_history = []
     st.session_state.current_response = None
     st.session_state.current_context = None
-    st.session_state.dark_mode = True  # Default to dark mode
+    # NOTE: dark_mode is initialized earlier (before CSS) to prevent flickering
 
 # Initialize RAG Pipeline (cached)
 @st.cache_resource
@@ -760,7 +766,7 @@ with st.sidebar:
 # ============================================================================
 
 # Header
-    st.markdown("""
+st.markdown("""
 <div class="app-header">
     <h1>🚗 LaCuraDellAuto AI</h1>
     <p>Intelligent Customer Support Assistant</p>
