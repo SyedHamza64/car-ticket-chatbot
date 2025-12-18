@@ -89,6 +89,10 @@ def main():
     existing_processed = []
     existing_processed_ids = set()
     
+    # Check if we're processing pre-filtered unique tickets from Streamlit
+    # In this case, skip deduplication since Streamlit already filtered against ChromaDB
+    is_streamlit_unique = raw_file_path is not None  # Streamlit sets ZENDESK_EXPORT_FILE env var
+    
     if processed_file.exists():
         try:
             logger.info("")
@@ -100,14 +104,17 @@ def main():
         except Exception as e:
             logger.warning(f"WARNING: Could not load existing processed tickets: {e}")
     
-    # Add only new processed tickets
+    # Add processed tickets
     new_count = 0
     for processed_ticket in processor.processed_tickets:
         ticket_id = processed_ticket.get('ticket_id')
-        if ticket_id and ticket_id not in existing_processed_ids:
-            existing_processed.append(processed_ticket)
-            existing_processed_ids.add(ticket_id)
-            new_count += 1
+        if ticket_id:
+            # If from Streamlit (pre-filtered unique tickets), always add
+            # Otherwise, only add if not already in processed_tickets.json
+            if is_streamlit_unique or ticket_id not in existing_processed_ids:
+                existing_processed.append(processed_ticket)
+                existing_processed_ids.add(ticket_id)
+                new_count += 1
     
     # Save merged processed tickets
     processed_file.parent.mkdir(parents=True, exist_ok=True)

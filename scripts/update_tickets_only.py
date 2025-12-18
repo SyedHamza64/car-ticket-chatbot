@@ -138,16 +138,29 @@ def main():
     logger.info("Embeddings complete.")
 
     # ----------------------------
-    # Add to Chroma
+    # Add to Chroma (in batches to avoid size limit)
     # ----------------------------
     logger.info("📦 Adding tickets to Chroma...")
+    CHROMA_BATCH_SIZE = 5000  # ChromaDB max is 5461, use 5000 for safety
+    
     try:
-        col.add(
-            ids=new_ids,
-            documents=new_texts,
-            embeddings=embeddings,
-            metadatas=new_metas,
-        )
+        total_added = 0
+        for i in range(0, len(new_ids), CHROMA_BATCH_SIZE):
+            batch_end = min(i + CHROMA_BATCH_SIZE, len(new_ids))
+            batch_ids = new_ids[i:batch_end]
+            batch_docs = new_texts[i:batch_end]
+            batch_embs = embeddings[i:batch_end]
+            batch_metas = new_metas[i:batch_end]
+            
+            col.add(
+                ids=batch_ids,
+                documents=batch_docs,
+                embeddings=batch_embs,
+                metadatas=batch_metas,
+            )
+            total_added += len(batch_ids)
+            logger.info(f"Added batch {i//CHROMA_BATCH_SIZE + 1}: {total_added}/{len(new_ids)} tickets")
+        
         logger.info("Chroma updated successfully.")
     except Exception as e:
         logger.exception(f"Chroma insertion failed: {e}")
