@@ -142,32 +142,44 @@ st.markdown("""
     }
     
     /* Sidebar toggle button - Make it VISIBLE */
+    /* Target the Streamlit sidebar collapse button with all known selectors */
     button[data-testid="stBaseButton-headerNoPadding"],
     button[data-testid="baseButton-headerNoPadding"],
     [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapsedControl"],
     section[data-testid="stSidebar"] > div:first-child > button,
-    .st-emotion-cache-6qob1r button {
-        background: var(--accent) !important;
+    .st-emotion-cache-6qob1r button,
+    button.st-emotion-cache-17zm0w6,
+    button.etdmgzm15,
+    .stApp > button:first-of-type {
+        background: #6366f1 !important;
         color: white !important;
         border-radius: 0 8px 8px 0 !important;
-        width: 24px !important;
-        height: 40px !important;
+        min-width: 28px !important;
+        min-height: 44px !important;
         border: none !important;
-        box-shadow: 2px 2px 8px rgba(0,0,0,0.3) !important;
+        box-shadow: 3px 3px 12px rgba(0,0,0,0.5) !important;
         opacity: 1 !important;
         visibility: visible !important;
+        position: fixed !important;
+        left: 0 !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important;
+        z-index: 999999 !important;
     }
     
     button[data-testid="stBaseButton-headerNoPadding"]:hover,
     button[data-testid="baseButton-headerNoPadding"]:hover,
-    [data-testid="collapsedControl"]:hover {
-        background: var(--accent-light) !important;
-        transform: scale(1.1);
+    [data-testid="collapsedControl"]:hover,
+    button.st-emotion-cache-17zm0w6:hover,
+    button.etdmgzm15:hover {
+        background: #a5b4fc !important;
+        transform: translateY(-50%) scale(1.1) !important;
     }
     
     /* When sidebar is collapsed, show the expand button clearly */
     [data-testid="stSidebarCollapsedControl"] {
-        background: var(--accent) !important;
+        background: #6366f1 !important;
         border-radius: 0 8px 8px 0 !important;
         opacity: 1 !important;
     }
