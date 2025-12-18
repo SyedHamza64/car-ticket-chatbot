@@ -849,60 +849,30 @@ with st.sidebar:
 # MAIN CONTENT
 # ============================================================================
 
-# Custom sidebar toggle button (always visible, works via JavaScript)
+# Force sidebar to always be visible with CSS
 st.markdown("""
 <style>
-    #custom-sidebar-toggle {
-        position: fixed;
-        left: 0;
-        top: 50%;
-        transform: translateY(-50%);
-        z-index: 999999;
-        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-        color: white;
-        border: none;
-        border-radius: 0 12px 12px 0;
-        padding: 15px 10px;
-        cursor: pointer;
-        font-size: 18px;
-        box-shadow: 4px 4px 15px rgba(0,0,0,0.4);
-        transition: all 0.3s ease;
-        writing-mode: vertical-rl;
-        text-orientation: mixed;
+    /* Force sidebar to ALWAYS be visible and expanded */
+    section[data-testid="stSidebar"] {
+        min-width: 21rem !important;
+        width: 21rem !important;
+        transform: translateX(0) !important;
+        visibility: visible !important;
+        display: block !important;
     }
-    #custom-sidebar-toggle:hover {
-        background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
-        padding-right: 15px;
-        box-shadow: 6px 6px 20px rgba(0,0,0,0.5);
+    
+    /* Hide the collapse button since we want sidebar always visible */
+    section[data-testid="stSidebar"] button[data-testid="stBaseButton-headerNoPadding"],
+    button.st-emotion-cache-17zm0w6,
+    button.etdmgzm15 {
+        display: none !important;
+    }
+    
+    /* Ensure main content doesn't overlap sidebar */
+    .main .block-container {
+        margin-left: 1rem;
     }
 </style>
-<button id="custom-sidebar-toggle" onclick="toggleSidebar()">☰ Menu</button>
-<script>
-    function toggleSidebar() {
-        // Find and click Streamlit's native sidebar button
-        const buttons = document.querySelectorAll('button');
-        for (let btn of buttons) {
-            if (btn.getAttribute('data-testid') && 
-                (btn.getAttribute('data-testid').includes('collapse') || 
-                 btn.getAttribute('data-testid').includes('sidebar'))) {
-                btn.click();
-                return;
-            }
-        }
-        // Fallback: toggle sidebar visibility directly
-        const sidebar = document.querySelector('[data-testid="stSidebar"]');
-        if (sidebar) {
-            if (sidebar.style.display === 'none' || sidebar.getAttribute('aria-expanded') === 'false') {
-                sidebar.style.display = 'block';
-                sidebar.style.width = '21rem';
-                sidebar.setAttribute('aria-expanded', 'true');
-            } else {
-                sidebar.style.display = 'none';
-                sidebar.setAttribute('aria-expanded', 'false');
-            }
-        }
-    }
-</script>
 """, unsafe_allow_html=True)
 
 # Header
