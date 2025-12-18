@@ -3,12 +3,22 @@ LaCuraDellAuto AI Support Assistant
 Modern, Clean, Professional Interface
 """
 
+import os
+import sys
+
+# Disable CUDA by default and set other environment variables BEFORE any other imports to prevent hangs
+if not os.getenv("USE_CUDA", "").lower() == "true":
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+# Streamlit-specific environment variables
+os.environ["STREAMLIT_SERVER_HEADLESS"] = "true"
+os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
+
 import streamlit as st
 import time
 import json
 from datetime import datetime
 from pathlib import Path
-import sys
 import subprocess
 import markdown
 
@@ -129,6 +139,37 @@ st.markdown("""
     
     section[data-testid="stSidebar"] .block-container {
         padding: 2rem 1.5rem;
+    }
+    
+    /* Sidebar toggle button - Make it VISIBLE */
+    button[data-testid="stBaseButton-headerNoPadding"],
+    button[data-testid="baseButton-headerNoPadding"],
+    [data-testid="collapsedControl"],
+    section[data-testid="stSidebar"] > div:first-child > button,
+    .st-emotion-cache-6qob1r button {
+        background: var(--accent) !important;
+        color: white !important;
+        border-radius: 0 8px 8px 0 !important;
+        width: 24px !important;
+        height: 40px !important;
+        border: none !important;
+        box-shadow: 2px 2px 8px rgba(0,0,0,0.3) !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+    }
+    
+    button[data-testid="stBaseButton-headerNoPadding"]:hover,
+    button[data-testid="baseButton-headerNoPadding"]:hover,
+    [data-testid="collapsedControl"]:hover {
+        background: var(--accent-light) !important;
+        transform: scale(1.1);
+    }
+    
+    /* When sidebar is collapsed, show the expand button clearly */
+    [data-testid="stSidebarCollapsedControl"] {
+        background: var(--accent) !important;
+        border-radius: 0 8px 8px 0 !important;
+        opacity: 1 !important;
     }
     
     /* Header */
