@@ -329,14 +329,17 @@ class BM25Retriever(BaseRetriever):
                     "source_id": doc_id,
                 }
                 
-                # Try to parse type from ID format
-                if "_ticket_" in doc_id:
+                # Try to parse type from ID format (e.g., "ticket_5309" or "guide_chunk_123")
+                if doc_id.startswith("ticket_"):
                     metadata["type"] = "ticket"
-                    # Extract ticket_id if possible
-                    parts = doc_id.split("_ticket_")
-                    if len(parts) > 1:
-                        metadata["orig_ticket_id"] = parts[-1]
-                elif "_guide_" in doc_id:
+                    # Extract ticket_id (e.g., "ticket_5309" -> 5309)
+                    try:
+                        ticket_id_str = doc_id.replace("ticket_", "")
+                        metadata["ticket_id"] = int(ticket_id_str)
+                        metadata["orig_ticket_id"] = ticket_id_str
+                    except ValueError:
+                        metadata["orig_ticket_id"] = doc_id
+                elif doc_id.startswith("guide_") or "_guide_" in doc_id:
                     metadata["type"] = "guide_chunk"
                 
                 documents.append(Document(page_content=doc_text, metadata=metadata))
@@ -821,12 +824,61 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
             if doc.metadata.get("type") == doc_type
         ]
     
+    def _enrich_bm25_metadata(self, documents: List[Document]) -> List[Document]:
+        """
+        Enrich BM25-sourced documents with full metadata from ChromaDB.
+        BM25 results only have basic metadata (ticket_id, type), this fetches
+        the complete metadata (subject, status, etc.) from the vector store.
+        """
+        if not documents:
+            return documents
+        
+        enriched = []
+        # Collect IDs that need enrichment (missing subject or status)
+        ids_to_fetch = []
+        for doc in documents:
+            if not doc.metadata.get("subject") and doc.metadata.get("source_id"):
+                ids_to_fetch.append(doc.metadata.get("source_id"))
+        
+        # Fetch metadata from ChromaDB if needed
+        chroma_metadata_map = {}
+        if ids_to_fetch:
+            try:
+                result = self.chroma._collection.get(
+                    ids=ids_to_fetch,
+                    include=["metadatas", "documents"]
+                )
+                for i, doc_id in enumerate(result.get("ids", [])):
+                    if i < len(result.get("metadatas", [])):
+                        chroma_metadata_map[doc_id] = {
+                            "metadata": result["metadatas"][i],
+                            "document": result["documents"][i] if result.get("documents") else None
+                        }
+            except Exception as e:
+                logger.warning(f"Could not fetch metadata for BM25 results: {e}")
+        
+        # Enrich documents
+        for doc in documents:
+            source_id = doc.metadata.get("source_id")
+            if source_id and source_id in chroma_metadata_map:
+                chroma_data = chroma_metadata_map[source_id]
+                # Merge ChromaDB metadata into document metadata
+                for key, value in chroma_data["metadata"].items():
+                    if key not in doc.metadata or not doc.metadata[key]:
+                        doc.metadata[key] = value
+                # Also update document content if it's empty
+                if not doc.page_content and chroma_data.get("document"):
+                    doc.page_content = chroma_data["document"]
+            enriched.append(doc)
+        
+        return enriched
+    
     def retrieve(
         self,
         query: str,
         top_k_tickets: int = 3,
         top_k_guides: int = 3,
-        fast_mode: bool = True,  # Fast mode: skip BM25 and reranking
+        fast_mode: bool = False,  # Hybrid mode: use BM25 for better keyword matching
     ) -> Dict[str, Any]:
         """
         Retrieve relevant tickets and guides using hybrid search.
@@ -899,6 +951,10 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
             # if self.reranker:
             #     ticket_candidates = self.reranker.rerank(query, ticket_candidates, top_k=top_k_tickets * 3)
             #     guide_candidates = self.reranker.rerank(query, guide_candidates, top_k=top_k_guides * 3)
+            
+            # Enrich BM25-sourced documents with full metadata from ChromaDB
+            ticket_candidates = self._enrich_bm25_metadata(ticket_candidates)
+            guide_candidates = self._enrich_bm25_metadata(guide_candidates)
         
         # Build Chroma-style return structure
         def _build_chroma_format(docs: List[Document]) -> Dict[str, Any]:
@@ -969,7 +1025,7 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
         tickets_data: Dict[str, Any],
         guides_data: Dict[str, Any],
         max_ticket_chars: int = 3000,  # Increased from 1500 to capture full agent responses
-        max_guide_chars: int = 1500,
+        max_guide_chars: int = 3000,
         max_tickets: int = 5,
         max_guides: int = 3,
         max_total_chars: int = 15000,
@@ -1056,7 +1112,7 @@ ANSWER (in Italian, respond naturally as the support agent, extract products and
         query: str,
         top_k_tickets: int = 3,
         top_k_guides: int = 3,
-        fast_mode: bool = True,  # Fast mode by default for speed
+        fast_mode: bool = False,  # Hybrid mode by default for accuracy
     ) -> Dict[str, Any]:
         """
         Main answer method - retrieves context and generates answer.
