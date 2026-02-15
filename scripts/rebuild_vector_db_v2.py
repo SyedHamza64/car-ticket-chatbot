@@ -17,6 +17,7 @@ import json
 import pickle
 import time
 from pathlib import Path
+from typing import Dict, Any, List
 from tqdm import tqdm
 from dotenv import load_dotenv
 
@@ -105,6 +106,57 @@ def load_json(path: Path):
 
 
 # ---------------------------------------------------------
+# QA PAIR EXTRACTION (from tickets)
+# ---------------------------------------------------------
+def extract_qa_pairs_from_ticket(ticket: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract QA pairs from a single ticket conversation."""
+    qa_pairs = []
+    ticket_id = ticket.get("ticket_id")
+    subject = ticket.get("subject", "")
+
+    conversation = ticket.get("conversation", [])
+    if not conversation:
+        return []
+
+    agent_id = ticket.get("agent_id")
+    used_agent_indices = set()
+
+    for i, comment in enumerate(conversation):
+        author_id = comment.get("author_id")
+        if author_id == agent_id or author_id == -1:
+            continue
+
+        customer_msg = (comment.get("body") or comment.get("plain_body") or "").strip()
+        if len(customer_msg) < 20:
+            continue
+
+        agent_response = None
+        agent_idx = None
+        for j in range(i + 1, len(conversation)):
+            next_comment = conversation[j]
+            if next_comment.get("author_id") == agent_id:
+                if j not in used_agent_indices:
+                    agent_response = (next_comment.get("body") or next_comment.get("plain_body") or "").strip()
+                    agent_idx = j
+                    break
+
+        if not agent_response or len(agent_response) < 20:
+            continue
+        if agent_idx is not None:
+            used_agent_indices.add(agent_idx)
+
+        qa_id = f"{ticket_id}_qa_{len(qa_pairs)}"
+        qa_pairs.append({
+            "qa_id": qa_id,
+            "orig_ticket_id": ticket_id,
+            "subject": subject,
+            "full_text": f"DOMANDA: {customer_msg}\n\nRISPOSTA: {agent_response}",
+            "type": "qa_pair",
+        })
+    return qa_pairs
+
+
+# ---------------------------------------------------------
 # BUILD BM25
 # ---------------------------------------------------------
 def build_bm25(docs):
@@ -142,9 +194,10 @@ def main():
     dense_meta = []
 
     # -----------------------------
-    # Process Tickets
+    # Process Tickets (with progress bar)
     # -----------------------------
-    for t in tickets:
+    print("\n📋 Processing tickets...")
+    for t in tqdm(tickets, desc="Processing tickets", unit="ticket"):
         raw = t.get("searchable_text", "")
         cleaned = clean_text(raw)
         if not cleaned:
@@ -164,6 +217,7 @@ def main():
             meta = {
                 "type": "ticket",
                 "orig_ticket_id": t.get("ticket_id"),
+                "ticket_id": t.get("ticket_id"),  # Add ticket_id for filtering
                 "chunk_index": idx,
                 "subject": t.get("subject", ""),
                 "status": t.get("status", ""),
@@ -174,9 +228,10 @@ def main():
             dense_meta.append(sanitize_metadata(meta))
 
     # -----------------------------
-    # Process Guide Chunks
+    # Process Guide Chunks (with progress bar)
     # -----------------------------
-    for gc in guide_chunks:
+    print("\n📚 Processing guide chunks...")
+    for gc in tqdm(guide_chunks, desc="Processing guides", unit="chunk"):
         cleaned = clean_text(gc.get("chunk_text", ""))
         if not cleaned:
             continue
@@ -201,63 +256,129 @@ def main():
         }
         dense_meta.append(sanitize_metadata(meta))
 
-    print(f"\nTotal documents prepared for embedding: {len(dense_docs)}")
+    # -----------------------------
+    # Process QA pairs (from tickets)
+    # -----------------------------
+    print("\n❓ Extracting QA pairs from tickets...")
+    all_qa_pairs = []
+    for t in tqdm(tickets, desc="Extracting QA pairs", unit="ticket"):
+        try:
+            pairs = extract_qa_pairs_from_ticket(t)
+            all_qa_pairs.extend(pairs)
+        except Exception:
+            continue
+
+    for qa in all_qa_pairs:
+        text = clean_text(qa.get("full_text", ""))
+        if not text:
+            continue
+        qa_id = qa.get("qa_id", "")
+        if not qa_id:
+            continue
+
+        bm25_docs.append(text)
+        bm25_ids.append(qa_id)
+        dense_docs.append(text)
+        dense_ids.append(qa_id)
+        meta = {
+            "type": "qa_pair",
+            "qa_id": qa_id,
+            "orig_ticket_id": qa.get("orig_ticket_id"),
+            "subject": qa.get("subject", ""),
+        }
+        dense_meta.append(sanitize_metadata(meta))
+
+    print(f"   Added {len(all_qa_pairs)} QA pairs.")
+    print(f"\n✅ Total documents prepared for embedding: {len(dense_docs)}", flush=True)
 
     # -----------------------------
     # Embeddings using LangChain
     # -----------------------------
-    print("\n🔧 Generating embeddings using LangChain…")
+    print("\n🔧 Loading embedding model...", flush=True)
     embeddings = get_embeddings()
+    print("✅ Embedding model loaded!", flush=True)
     
     # Convert to LangChain Documents
+    print("\n📝 Creating document objects...", flush=True)
     langchain_docs = []
     for i, (doc_text, doc_id, doc_meta) in enumerate(zip(dense_docs, dense_ids, dense_meta)):
         langchain_docs.append(Document(
             page_content=doc_text,
             metadata={**doc_meta, "id": doc_id}
         ))
+    print(f"✅ Created {len(langchain_docs)} document objects", flush=True)
     
     # Duplicate ID check
     if len(dense_ids) != len(set(dense_ids)):
         raise SystemExit("❌ Duplicate IDs detected. Aborting.")
 
     # -----------------------------
-    # Chroma DB using LangChain — Drop + Recreate
+    # Chroma DB using LangChain — Drop + Recreate (with batched progress)
     # -----------------------------
-    print("📦 Writing to ChromaDB using LangChain…")
-
-    # Delete existing collection if it exists
+    print("\n📦 Deleting old ChromaDB collection...", flush=True)
     try:
         client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
         client.delete_collection("rag_v2")
-    except:
-        pass
+        print("✅ Old collection deleted.", flush=True)
+    except Exception as e:
+        print(f"  (No existing collection to delete: {e})", flush=True)
 
-    # Use LangChain's Chroma.from_documents
-    vectorstore = Chroma.from_documents(
-        documents=langchain_docs,
-        embedding=embeddings,
-        collection_name="rag_v2",
-        persist_directory=str(CHROMA_DB_DIR),
-    )
-
-    print("✓ Chroma indexing complete using LangChain.\n")
+    # Batch insert with progress
+    BATCH_SIZE = 500
+    total_batches = (len(langchain_docs) + BATCH_SIZE - 1) // BATCH_SIZE
+    
+    print(f"\n🚀 Generating embeddings & inserting to ChromaDB...", flush=True)
+    print(f"   Total: {len(langchain_docs)} docs in {total_batches} batches ({BATCH_SIZE} docs/batch)", flush=True)
+    print(f"   Estimated time: 5-10 minutes on CPU\n", flush=True)
+    
+    vectorstore = None
+    start_time = time.time()
+    
+    for batch_num, batch_idx in enumerate(range(0, len(langchain_docs), BATCH_SIZE), 1):
+        batch_docs = langchain_docs[batch_idx:batch_idx + BATCH_SIZE]
+        batch_ids = dense_ids[batch_idx:batch_idx + BATCH_SIZE]
+        batch_start = time.time()
+        
+        print(f"   📦 Batch {batch_num}/{total_batches}: Processing {len(batch_docs)} docs...", end=" ", flush=True)
+        
+        if vectorstore is None:
+            # First batch: create the vectorstore with explicit ids so get(ids=[...]) works
+            vectorstore = Chroma.from_documents(
+                documents=batch_docs,
+                embedding=embeddings,
+                collection_name="rag_v2",
+                persist_directory=str(CHROMA_DB_DIR),
+                ids=batch_ids,
+            )
+        else:
+            # Subsequent batches: add with same explicit ids
+            vectorstore.add_documents(batch_docs, ids=batch_ids)
+        
+        batch_time = time.time() - batch_start
+        elapsed_total = time.time() - start_time
+        remaining_batches = total_batches - batch_num
+        eta = (elapsed_total / batch_num) * remaining_batches
+        
+        print(f"Done! ({batch_time:.1f}s) | Elapsed: {elapsed_total:.0f}s | ETA: {eta:.0f}s", flush=True)
+    
+    elapsed = time.time() - start_time
+    print(f"\n✅ Chroma indexing complete! (took {elapsed:.1f} seconds)", flush=True)
 
     # -----------------------------
     # BM25 INDEX
     # -----------------------------
-    print("📚 Building BM25 Index…")
-
+    print("\n📚 Building BM25 Index...", flush=True)
     bm25 = build_bm25(bm25_docs)
 
     with open(BM25_INDEX_PATH, "wb") as f:
         pickle.dump({
             "bm25": bm25,
             "ids": bm25_ids,
-            "docs": bm25_docs
+            "docs": bm25_docs,
+            "metadatas": dense_meta,
         }, f)
 
-    print(f"✓ BM25 saved at: {BM25_INDEX_PATH}")
+    print(f"✅ BM25 saved at: {BM25_INDEX_PATH}")
     print("\n🎉 REBUILD COMPLETE — Local embeddings are now active!\n")
 
 

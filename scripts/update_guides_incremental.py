@@ -198,34 +198,29 @@ def main():
             metadatas=to_update_meta,
         )
 
-    # REBUILD BM25 INDEX (recommended)
-    logger.info("Rebuilding BM25 index (full)...")
+    # REBUILD BM25 INDEX from ALL documents (tickets + guides + QA), not just guides
+    logger.info("Rebuilding BM25 index (full - all types)...")
     if db.rag_v2_coll:
-        # Get all guide chunks from unified collection
-        try:
-            new_all = db.rag_v2_coll.get(where={"type": "guide_chunk"}, limit=None)
-        except:
-            # Fallback
-            all_data = db.rag_v2_coll.get(limit=None)
-            ids = all_data.get("ids", [])
-            docs = all_data.get("documents", [])
-            metas = all_data.get("metadatas", [])
-            guide_indices = [i for i, meta in enumerate(metas) if meta and meta.get("type") == "guide_chunk"]
-            new_all = {
-                "ids": [ids[i] for i in guide_indices],
-                "documents": [docs[i] for i in guide_indices]
-            }
+        all_data = db.rag_v2_coll.get(limit=None, include=["documents", "metadatas"])
+        all_ids = all_data.get("ids", [])
+        all_docs = all_data.get("documents", [])
+        all_metas = all_data.get("metadatas", [])
+    elif db.guides_coll:
+        gd = db.guides_coll.get()
+        all_ids = gd.get("ids", [])
+        all_docs = gd.get("documents", [])
+        all_metas = gd.get("metadatas", [])
     else:
-        new_all = db.guides_coll.get()
-    
-    bm25, ids = rebuild_bm25_index(new_all["documents"], new_all["ids"])
+        all_ids, all_docs, all_metas = [], [], []
 
-    # Save in dictionary format (same as rebuild_vector_db_v2.py and update_tickets_only.py)
+    bm25, ids = rebuild_bm25_index(all_docs, all_ids)
+
     with open(BM25_INDEX_PATH, "wb") as f:
         pickle.dump({
             "bm25": bm25,
             "ids": ids,
-            "docs": new_all["documents"]
+            "docs": all_docs,
+            "metadatas": all_metas,
         }, f)
 
     logger.info("Guide update complete!")

@@ -78,14 +78,14 @@ class TicketProcessor:
             'description': self.clean_html(ticket.get('description', '')),
             'status': ticket.get('status', ''),
             'priority': ticket.get('priority'),
-            'channel': ticket.get('via', {}).get('channel', ''),
+            'channel': (ticket.get('via') or {}).get('channel', ''),
             'created_at': ticket.get('created_at', ''),
             'updated_at': ticket.get('updated_at', ''),
-            'solved_at': ticket.get('dates', {}).get('solved_at'),
+            'solved_at': (ticket.get('dates') or {}).get('solved_at'),
         }
         
         # Extract customer info
-        requester = ticket.get('requester', {})
+        requester = ticket.get('requester') or {}
         customer_info = {
             'customer_id': requester.get('id'),
             'customer_name': requester.get('name', ''),
@@ -93,7 +93,7 @@ class TicketProcessor:
         }
         
         # Extract agent info
-        assignee = ticket.get('assignee', {})
+        assignee = ticket.get('assignee') or {}
         agent_info = {
             'agent_id': assignee.get('id'),
             'agent_name': assignee.get('name', ''),
@@ -101,7 +101,7 @@ class TicketProcessor:
         }
         
         # Extract comments/conversation
-        comments = ticket.get('comments', [])
+        comments = ticket.get('comments') or []
         conversation = []
         
         for comment in comments:
@@ -114,7 +114,7 @@ class TicketProcessor:
                 'plain_body': comment.get('plain_body', ''),
                 'public': comment.get('public', False),
                 'created_at': comment.get('created_at', ''),
-                'via_channel': comment.get('via', {}).get('channel', ''),
+                'via_channel': (comment.get('via') or {}).get('channel', ''),
             }
             conversation.append(comment_data)
         
