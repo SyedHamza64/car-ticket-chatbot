@@ -1486,10 +1486,11 @@ with tab_manage:
                                 import tempfile
                                 import os
                                 
-                                # Create temporary file with only unique tickets
+                                # Create temporary file with only unique tickets (no indent to reduce size)
                                 with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp_file:
-                                    json.dump(unique_tickets, tmp_file, ensure_ascii=False, indent=2)
+                                    json.dump(unique_tickets, tmp_file, ensure_ascii=False)
                                     tmp_path = Path(tmp_file.name)
+                                status.write(f"📁 Temp file: {tmp_path} ({tmp_path.stat().st_size / 1024 / 1024:.1f} MB)")
                                 
                                 # Set environment variable for the script to use
                                 env = os.environ.copy()

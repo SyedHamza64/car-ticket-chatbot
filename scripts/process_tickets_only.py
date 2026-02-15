@@ -69,7 +69,9 @@ def main():
         processor.load_tickets()
         logger.info(f"[OK] Loaded {len(processor.tickets)} raw tickets")
     except Exception as e:
-        logger.error(f"ERROR: Error loading tickets: {e}")
+        logger.error(f"ERROR: Error loading tickets ({type(e).__name__}): {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return 1
     
     logger.info("")
