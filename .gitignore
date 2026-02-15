@@ -17,6 +17,7 @@ data/raw/*
 data/processed/*
 data/guides/*
 data/chroma/*
+data/bm25_index.pkl
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/guides/.gitkeep
