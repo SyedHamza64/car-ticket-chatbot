@@ -29,7 +29,7 @@ EMBEDDING_PROVIDER = "local"
 
 LOCAL_EMBEDDING_MODEL = os.getenv(
     "LOCAL_EMBEDDING_MODEL",
-    "sentence-transformers/all-MiniLM-L6-v2"  # Faster model, 5x speed improvement
+    "sentence-transformers/all-mpnet-base-v2"
 )
 
 
@@ -44,8 +44,8 @@ CHUNK_TARGET_WORDS = int(os.getenv("CHUNK_TARGET_WORDS", 250))  # roughly 150-35
 CHUNK_OVERLAP_WORDS = int(os.getenv("CHUNK_OVERLAP_WORDS", 30))
 
 # Hybrid retrieval defaults (will be used later)
-HYBRID_DENSE_WEIGHT = float(os.getenv("HYBRID_DENSE_WEIGHT", 0.50))
-HYBRID_SPARSE_WEIGHT = float(os.getenv("HYBRID_SPARSE_WEIGHT", 0.50))
+HYBRID_DENSE_WEIGHT = float(os.getenv("HYBRID_DENSE_WEIGHT", 0.65))
+HYBRID_SPARSE_WEIGHT = float(os.getenv("HYBRID_SPARSE_WEIGHT", 0.35))
 
 # Reranker model (pluggable)
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
