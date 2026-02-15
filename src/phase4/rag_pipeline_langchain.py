@@ -95,17 +95,6 @@ class LangchainRAG:
         # 5. Initialize Reranker (Optional)
         self.reranker = CrossEncoderRerankerWrapper(RERANKER_MODEL) if RERANKER_MODEL else None
 
-    def _safe_search(self, query: str, k: int, filter_dict: dict) -> list:
-        """Safely search ChromaDB, returning [] on any error."""
-        try:
-            results = self.chroma.similarity_search_with_score(query, k=k, filter=filter_dict)
-            for doc, score in results:
-                doc.metadata["distance"] = float(score)
-            return results
-        except Exception as e:
-            logger.warning(f"Dense search failed for filter {filter_dict}: {e}")
-            return []
-
     def retrieve(
         self,
         query: str,
@@ -115,10 +104,15 @@ class LangchainRAG:
         fast_mode: bool = False,
     ) -> Dict[str, Any]:
         """Hybrid retrieval for tickets, guides, and Q&A pairs."""
-        # Dense retrieval for each type (safe - won't crash on corrupted DB)
-        dense_tickets = self._safe_search(query, 50, {"type": "ticket"})
-        dense_guides = self._safe_search(query, 50, {"type": "guide_chunk"})
-        dense_qa = self._safe_search(query, 50, {"type": "qa_pair"})
+        # Dense retrieval for each type
+        dense_tickets = self.chroma.similarity_search_with_score(query, k=50, filter={"type": "ticket"})
+        dense_guides = self.chroma.similarity_search_with_score(query, k=50, filter={"type": "guide_chunk"})
+        dense_qa = self.chroma.similarity_search_with_score(query, k=50, filter={"type": "qa_pair"})
+        
+        # Unpack and add distance
+        for doc, score in dense_tickets: doc.metadata["distance"] = float(score)
+        for doc, score in dense_guides: doc.metadata["distance"] = float(score)
+        for doc, score in dense_qa: doc.metadata["distance"] = float(score)
         
         dense_tickets_docs = [d for d, _ in dense_tickets]
         dense_guides_docs = [d for d, _ in dense_guides]
@@ -168,20 +162,16 @@ class LangchainRAG:
         if not missing_ids: return docs
         
         try:
-            # Fetch one by one to avoid "Error finding id" on missing IDs
-            id_to_meta = {}
-            for mid in missing_ids:
-                try:
-                    result = self.chroma._collection.get(ids=[mid])
-                    if result and result.get("ids"):
-                        for i, rid in enumerate(result["ids"]):
-                            id_to_meta[rid] = result["metadatas"][i]
-                except Exception:
-                    continue  # Skip IDs that don't exist in Chroma
+            # Use native ids parameter instead of where clause for primary keys
+            results = self.chroma._collection.get(ids=missing_ids)
+            metadatas = results.get("metadatas", [])
+            ids = results.get("ids", [])
             
+            id_to_meta = {ids[i]: metadatas[i] for i in range(len(ids))}
             for doc in docs:
                 sid = _sid(doc)
                 if sid and sid in id_to_meta:
+                    # Merge fetched metadata, keeping existing hybrid scores
                     preserved = {k: v for k, v in doc.metadata.items() if k in ["hybrid_score", "distance", "lexical_score"]}
                     doc.metadata.update(id_to_meta[sid])
                     doc.metadata.update(preserved)
@@ -330,14 +320,10 @@ class LangchainRAG:
     def get_stats(self) -> Dict[str, int]:
         """Aggregate counts from vector store."""
         try:
-            count = self.chroma._collection.count()
-            if count == 0:
-                return {"tickets": 0, "guides": 0, "qa_pairs": 0}
+            # Increased limit to ensure all documents are counted
             metas = self.chroma._collection.get(limit=15000, include=["metadatas"])["metadatas"]
             return {
                 "tickets": sum(1 for m in metas if m.get("type") == "ticket"),
-                "guides": sum(1 for m in metas if m.get("type") == "guide_chunk"),
-                "qa_pairs": sum(1 for m in metas if m.get("type") == "qa_pair"),
+                "guides": sum(1 for m in metas if m.get("type") == "guide_chunk")
             }
-        except Exception:
-            return {"tickets": 0, "guides": 0, "qa_pairs": 0}
+        except Exception: return {"tickets": 0, "guides": 0}
