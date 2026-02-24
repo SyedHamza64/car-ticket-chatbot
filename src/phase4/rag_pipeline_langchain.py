@@ -16,6 +16,8 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import re
 
+import chromadb
+
 # LangChain imports
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
@@ -52,6 +54,7 @@ class LangchainRAG:
         bm25_path: Optional[Path] = None,
         dense_weight: float = HYBRID_DENSE_WEIGHT,
         sparse_weight: float = HYBRID_SPARSE_WEIGHT,
+        chroma_client=None,
     ):
         self.provider = provider.lower()
         self.dense_weight = dense_weight
@@ -69,13 +72,22 @@ class LangchainRAG:
             encode_kwargs={"normalize_embeddings": True}
         )
         
-        # 3. Initialize Chroma
-        chroma_path = chroma_dir or CHROMA_DB_DIR
-        self.chroma = Chroma(
-            collection_name="rag_v2",
-            embedding_function=self.embeddings,
-            persist_directory=str(chroma_path),
-        )
+        # 3. Initialize Chroma — reuse provided client to avoid Windows file-lock issues
+        if chroma_client is not None:
+            self._chroma_client = chroma_client
+            self.chroma = Chroma(
+                collection_name="rag_v2",
+                embedding_function=self.embeddings,
+                client=chroma_client,
+            )
+        else:
+            chroma_path = chroma_dir or CHROMA_DB_DIR
+            self._chroma_client = chromadb.PersistentClient(path=str(chroma_path))
+            self.chroma = Chroma(
+                collection_name="rag_v2",
+                embedding_function=self.embeddings,
+                client=self._chroma_client,
+            )
         
         # 4. Initialize BM25
         bm25_file = bm25_path or BM25_INDEX_PATH

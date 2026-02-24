@@ -18,22 +18,20 @@ import streamlit as st
 import time
 import json
 from datetime import datetime
+from dotenv import load_dotenv
 
-print("\n" + "="*50)
-print(f"DEBUG: streamlit_app.py is RUNNING")
-print(f"DEBUG: File path: {__file__}")
-print("="*50 + "\n")
 from pathlib import Path
 import subprocess
-import markdown
 
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
+load_dotenv(project_root / ".env")
 
-# LangChain RAG pipeline
-from src.phase4.rag_pipeline_langchain import LangchainRAG
-from src.utils.model_checker import get_available_models
+from src.app.state import init_session_state, reset_pipeline, get_chroma_client
+from src.ui.auth import require_authenticated_user, logout, is_auth_configured
+from src.ui.query_tab import render_query_tab
+from src.ui.manage_tab import render_manage_tab
 
 # Page configuration
 st.set_page_config(
@@ -42,6 +40,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Authentication (optional: if AUTH_USERNAME + AUTH_PASSWORD_HASH set in .env)
+display_name, username = require_authenticated_user()
 
 # Theme toggle in session state - Initialize ONCE with consistent default
 if 'dark_mode' not in st.session_state:
@@ -675,24 +676,23 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = False
-    st.session_state.pipeline = None
-    st.session_state.current_model = None
-    st.session_state.current_provider = None
-    st.session_state.stats = {'tickets': 0, 'guides': 0}
-    st.session_state.query_history = []
-    st.session_state.current_response = None
-    st.session_state.current_context = None
-    # NOTE: dark_mode is initialized earlier (before CSS) to prevent flickering
-if 'stats' not in st.session_state:
-    st.session_state.stats = {'tickets': 0, 'guides': 0}
+def _reset_pipeline(recycle_client: bool = False):
+    """Wrapper around app state helper for backward compatibility."""
+    reset_pipeline(st, recycle_client=recycle_client)
 
-# Initialize RAG Pipeline (cached)
-@st.cache_resource
+
+init_session_state(st)
+
+# Loading placeholder - shows while pipeline init runs in sidebar (avoids flash of login/empty state)
+loading_placeholder = st.empty()
+
+def _get_chroma_client():
+    """Wrapper around app state helper for backward compatibility."""
+    return get_chroma_client(st)
+
+# Initialize RAG Pipeline
 def initialize_pipeline(model_name, provider="ollama"):
-    """Initialize the RAG pipeline."""
+    """Initialize the RAG pipeline with a fresh ChromaDB client."""
     try:
         import os
         if provider == "ollama":
@@ -706,24 +706,44 @@ def initialize_pipeline(model_name, provider="ollama"):
             if module in sys.modules:
                 del sys.modules[module]
         
+        client = _get_chroma_client()
         from src.phase4.rag_pipeline_langchain import LangchainRAG
-        pipeline = LangchainRAG(provider=provider, model=model_name)
+        pipeline = LangchainRAG(
+            provider=provider,
+            model=model_name,
+            chroma_client=client,
+        )
 
         return pipeline, None
     except Exception as e:
         return None, str(e)
 
-# Get available models
-try:
-    installed_models = get_available_models()
-    AVAILABLE_MODELS = installed_models if installed_models else ['gemma2:2b', 'llama3.1:8b']
-except:
-    AVAILABLE_MODELS = ['gemma2:2b', 'llama3.1:8b']
-
 # ============================================================================
 # SIDEBAR
 # ============================================================================
+with loading_placeholder.container():
+    st.markdown(
+        """
+        <style>
+        @keyframes load-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        </style>
+        <div style='text-align:center; padding:4rem 2rem;'>
+            <p style='font-size:1.2rem; color:var(--text-secondary); margin-bottom:1rem;'>
+                <span style='animation:load-pulse 1.2s ease-in-out infinite;'>🔄</span> Loading your assistant...
+            </p>
+            <p style='font-size:0.9rem; color:var(--text-muted);'>Initializing AI pipeline • Please wait</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 with st.sidebar:
+    if is_auth_configured():
+        st.markdown(f"👤 **{display_name}**")
+        if st.button("🚪 Logout", key="logout_btn"):
+            logout()
+            st.rerun()
+    st.markdown("---")
     st.markdown("## ⚙️ **Settings**")
     
     # Theme Toggle
@@ -780,9 +800,15 @@ with st.sidebar:
             help="Select Gemini model (Google AI Studio)"
         )
     else:
+        try:
+            from src.utils.model_checker import get_available_models
+            _models = get_available_models()
+            _ollama_models = _models if _models else ['gemma2:2b', 'llama3.1:8b']
+        except Exception:
+            _ollama_models = ['gemma2:2b', 'llama3.1:8b']
         selected_model = st.selectbox(
             "🤖 **Ollama Model**",
-            AVAILABLE_MODELS,
+            _ollama_models,
             index=0,
             help="Select Ollama model"
         )
@@ -804,7 +830,7 @@ with st.sidebar:
     if not st.session_state.initialized or model_changed or provider_changed:
         with st.spinner(f"Loading {provider_name}/{selected_model}..."):
             if (model_changed or provider_changed) and st.session_state.initialized:
-                st.cache_resource.clear()
+                _reset_pipeline()
             
             pipeline, error = initialize_pipeline(selected_model, provider=provider_name)
             if error:
@@ -834,7 +860,7 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🔄 Refresh", use_container_width=True):
-            st.cache_resource.clear()
+            _reset_pipeline()
             st.rerun()
     with col2:
         if st.button("🗑️ Clear", use_container_width=True):
@@ -855,6 +881,7 @@ with st.sidebar:
 # ============================================================================
 # MAIN CONTENT
 # ============================================================================
+loading_placeholder.empty()  # Clear loading state, show main UI
 
 # Force sidebar to always be visible with CSS
 st.markdown("""
@@ -897,1020 +924,31 @@ tab_query, tab_manage = st.tabs(["💬 Ask Question", "🗄️ Manage Knowledge 
 # TAB 1: QUERY INTERFACE
 # ============================================================================
 with tab_query:
-    # Query input
-    st.markdown("### 💬 **What would you like to know?**")
-    
-    query = st.text_area(
-        "Enter your question",
-        height=100,
-        placeholder="Es: Come posso rimuovere i graffi dalla carrozzeria?\nEs: Quale prodotto usare per lucidare l'auto?",
-        label_visibility="collapsed"
+    render_query_tab(
+        st=st,
+        datetime=datetime,
+        time=time,
+        initialize_pipeline=initialize_pipeline,
+        reset_pipeline=_reset_pipeline,
+        selected_model=selected_model,
+        provider_name=provider_name,
     )
-
-    # Options row
-    col1, col2, col3 = st.columns([1.5, 1.5, 3])
-    with col1:
-        n_tickets = st.selectbox("📋 Ticket Sources", [1, 2, 3, 4, 5], index=2, help="Number of relevant tickets to retrieve")
-    with col2:
-        n_guides = st.selectbox("📚 Guide Sources", [1, 2, 3, 4, 5], index=2, help="Number of relevant guide sections to retrieve")
-    with col3:
-        generate_btn = st.button("✨ Generate Response", type="primary", use_container_width=True)
-            
-    # Generate response
-    if generate_btn and query.strip():
-        with st.spinner("🤔 Thinking..."):
-            try:
-                start_time = time.time()
-                result = st.session_state.pipeline.answer(
-                    query,
-                    top_k_tickets=n_tickets,
-                    top_k_guides=n_guides,
-                )
-                elapsed = time.time() - start_time
-                
-                # Map answer() response to expected format
-                st.session_state.current_response = result['answer']  # answer() returns 'answer', not 'response'
-                st.session_state.current_responses = None  # answer() doesn't support multiple drafts
-                st.session_state.num_drafts = 1  # Single response only
-                st.session_state.current_context = result['context']  # Formatted context string
-                st.session_state.current_sources = result['sources']  # Store sources separately for display
-                st.session_state.response_time = elapsed
-                
-                st.session_state.query_history.append({
-                    'time': datetime.now().strftime("%H:%M"),
-                    'query': query[:50],
-                    'response': result['answer']  # answer() returns 'answer', not 'response'
-                })
-                
-            except Exception as e:
-                err_text = str(e)
-                # Groq planner models can intermittently fail with this internal id error.
-                # Retry once with a stable model to avoid breaking the user flow.
-                if (
-                    "error executing plan" in err_text.lower()
-                    or "error finding id" in err_text.lower()
-                    or "internal error" in err_text.lower()
-                ):
-                    try:
-                        st.cache_resource.clear()
-                        fallback_model = "llama-3.3-70b-versatile"
-                        pipeline, init_error = initialize_pipeline(fallback_model, provider="grok")
-                        if init_error:
-                            raise RuntimeError(init_error)
-                        st.session_state.pipeline = pipeline
-                        st.session_state.initialized = True
-                        st.session_state.current_model = fallback_model
-                        st.session_state.current_provider = "grok"
-
-                        start_time = time.time()
-                        result = st.session_state.pipeline.answer(
-                            query,
-                            top_k_tickets=n_tickets,
-                            top_k_guides=n_guides,
-                        )
-                        elapsed = time.time() - start_time
-
-                        st.session_state.current_response = result['answer']
-                        st.session_state.current_responses = None
-                        st.session_state.num_drafts = 1
-                        st.session_state.current_context = result['context']
-                        st.session_state.current_sources = result['sources']
-                        st.session_state.response_time = elapsed
-                        st.session_state.query_history.append({
-                            'time': datetime.now().strftime("%H:%M"),
-                            'query': query[:50],
-                            'response': result['answer']
-                        })
-                        st.info("Switched to a stable Groq model and retried successfully.")
-                    except Exception as retry_e:
-                        st.error(f"❌ Error: {str(retry_e)}")
-                else:
-                    st.error(f"❌ Error: {err_text}")
-
-    # Display response
-    if st.session_state.current_response:
-        st.markdown("---")
-        
-        # Response header
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown("### 💡 AI Response")
-        with col2:
-            st.caption(f"⏱️ {st.session_state.get('response_time', 0):.1f}s")
-        
-        # Multiple drafts
-        if st.session_state.get('num_drafts', 1) > 1 and st.session_state.get('current_responses'):
-            draft_tabs = st.tabs([f"Draft {i+1}" for i in range(st.session_state.num_drafts)])
-            for i, tab in enumerate(draft_tabs):
-                with tab:
-                    st.markdown(f"""
-                    <div class="response-box">
-                        <div class="response-text">{st.session_state.current_responses[i]['text']}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-        else:
-            # Single response - convert markdown to HTML with proper link handling
-            import re
-            response_text = st.session_state.current_response
-            # Convert markdown links [text](url) to HTML <a> tags
-            response_html = re.sub(
-                r'\[([^\]]+)\]\(([^)]+)\)',
-                r'<a href="\2" target="_blank" style="color: #60A5FA; text-decoration: underline;">\1</a>',
-                response_text
-            )
-            # Convert newlines to <br>
-            response_html = response_html.replace('\n', '<br>')
-            st.markdown(f"""
-            <div class="response-box">
-                <div class="response-text">{response_html}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Action buttons
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            if st.button("📋 Copy to Clipboard", use_container_width=True):
-                st.toast("✅ Copied!", icon="📋")
-        with col2:
-            if st.button("👍 Helpful", use_container_width=True):
-                st.toast("Thanks for feedback!", icon="👍")
-        with col3:
-            if st.button("👎 Not helpful", use_container_width=True):
-                st.toast("We'll improve!", icon="📝")
-        
-        # Sources
-        with st.expander("📚 View Sources", expanded=False):
-            src_tab1, src_tab2 = st.tabs(["Tickets", "Guides"])
-            
-            # Tickets source view
-            with src_tab1:
-                if st.session_state.get('current_sources'):
-                    tickets = st.session_state.current_sources.get('tickets', {})
-                    if tickets.get('ids') and tickets['ids'][0]:
-                        docs = tickets.get('documents', [[]])[0] or []
-                        metas = tickets.get('metadatas', [[]])[0] or []
-                        dists = tickets.get('distances', [[]])[0] or []
-                        
-                        for i, (doc, meta) in enumerate(zip(docs, metas), 1):
-                            subject = meta.get('subject', 'N/A')
-                            status = meta.get('status', 'N/A')
-                            ticket_id = meta.get('ticket_id') or meta.get('orig_ticket_id', 'N/A')  # Check both fields
-                            priority = meta.get('priority', 'N/A')
-                            created_at = meta.get('created_at', 'N/A')
-                            
-                            # Relevance badge based on distance (lower distance = higher relevance)
-                            # Adjusted thresholds for hybrid scoring (produces higher distances than pure dense)
-                            relevance_badge = ""
-                            try:
-                                dist = float(dists[i-1]) if len(dists) >= i else None
-                            except Exception:
-                                dist = None
-                            
-                            if dist is not None:
-                                if dist <= 0.5:  # Was 0.25 - more lenient for hybrid scoring
-                                    relevance_badge = "🟢 **High relevance**"
-                                elif dist <= 0.75:  # Was 0.5 - medium range expanded
-                                    relevance_badge = "🟡 **Medium relevance**"
-                                else:
-                                    relevance_badge = "🔴 **Low relevance**"
-                            
-                            st.markdown(f"**{i}. {subject}**")
-                            caption_line = f"Status: {status} • Ticket ID: {ticket_id}"
-                            if relevance_badge:
-                                caption_line += f" • {relevance_badge}"
-                            st.caption(caption_line)
-                            
-                            if st.checkbox("Show details", key=f"ticket_src_{i}"):
-                                # Structured metadata
-                                st.markdown(f"- **Ticket ID**: `{ticket_id}`")
-                                st.markdown(f"- **Status**: `{status}`")
-                                if priority and priority != 'N/A':
-                                    st.markdown(f"- **Priority**: `{priority}`")
-                                if created_at and created_at != 'N/A':
-                                    st.markdown(f"- **Created at**: `{created_at}`")
-                                
-                                # Parse searchable_text into subject, description, conversation
-                                from html import unescape
-                                subject_text = ""
-                                description_text = ""
-                                messages = []
-                                for line in (doc or "").splitlines():
-                                    raw = line.strip()
-                                    if not raw:
-                                        continue
-                                    if raw.startswith("Subject:"):
-                                        subject_text = raw[len("Subject:"):].strip()
-                                    elif raw.startswith("Description:"):
-                                        description_text = raw[len("Description:"):].strip()
-                                    elif ": " in raw:
-                                        author, msg = raw.split(": ", 1)
-                                        messages.append((author.strip(), unescape(msg.strip())))
-                                
-                                st.markdown("---")
-                                if subject_text:
-                                    st.markdown(f"**Subject**: {subject_text}")
-                                if description_text:
-                                    st.markdown(f"**Description**: {description_text}")
-                                
-                                if messages:
-                                    st.markdown("**Conversation:**")
-                                    for author, msg in messages:
-                                        # Show a reasonable preview per message
-                                        preview = msg if len(msg) <= 500 else msg[:500] + " [...]"
-                                        st.markdown(f"- **{author}**: {preview}")
-                                
-                                # Optional raw view (use checkbox instead of nested expander)
-                                if st.checkbox("Show raw searchable text", key=f"ticket_raw_{i}"):
-                                    st.text(doc if len(doc) <= 2000 else doc[:2000] + "\n...\n[truncated]")
-                            
-                            st.markdown("---")
-                    else:
-                        st.info("No tickets found")
-                else:
-                    st.info("No tickets found")
-            
-            # Guides source view
-            with src_tab2:
-                if st.session_state.get('current_sources'):
-                    guides = st.session_state.current_sources.get('guides', {})
-                    if guides.get('ids') and guides['ids'][0]:
-                        docs = guides.get('documents', [[]])[0] or []
-                        metas = guides.get('metadatas', [[]])[0] or []
-                        dists = guides.get('distances', [[]])[0] or []
-                        
-                        for i, (doc, meta) in enumerate(zip(docs, metas), 1):
-                            guide_title = meta.get('guide_title', 'N/A')
-                            section_title = meta.get('section_title', 'N/A')
-                            guide_url = meta.get('url', '')
-                            guide_number = meta.get('guide_number', '')
-                            
-                            # Relevance badge based on distance (lower distance = higher relevance)
-                            # Adjusted thresholds for hybrid scoring (produces higher distances than pure dense)
-                            relevance_badge = ""
-                            try:
-                                dist = float(dists[i-1]) if len(dists) >= i else None
-                            except Exception:
-                                dist = None
-                            
-                            if dist is not None:
-                                if dist <= 0.5:  # Was 0.25 - more lenient for hybrid scoring
-                                    relevance_badge = "🟢 **High relevance**"
-                                elif dist <= 0.75:  # Was 0.5 - medium range expanded
-                                    relevance_badge = "🟡 **Medium relevance**"
-                                else:
-                                    relevance_badge = "🔴 **Low relevance**"
-                            
-                            # Display guide title with link if available
-                            if guide_url and guide_url != 'N/A' and guide_url.strip():
-                                st.markdown(f"**{i}. [{guide_title}]({guide_url})** 🔗")
-                            else:
-                                st.markdown(f"**{i}. {guide_title}**")
-                            
-                            caption_parts = []
-                            if guide_number and guide_number != 'N/A':
-                                caption_parts.append(f"Guide: {guide_number}")
-                            if section_title and section_title != 'N/A':
-                                caption_parts.append(f"Section: {section_title}")
-                            if relevance_badge:
-                                caption_parts.append(relevance_badge)
-                            if caption_parts:
-                                st.caption(" • ".join(caption_parts))
-                            
-                            if st.checkbox("Show content", key=f"guide_src_{i}"):
-                                st.text(doc if len(doc) <= 2000 else doc[:2000] + "\n...\n[truncated]")
-                            
-                            st.markdown("---")
-                    else:
-                        st.info("No guides found")
-                else:
-                    st.info("No guides found")
-
-    # Query history
-    if st.session_state.query_history:
-        st.markdown("---")
-        st.markdown("### 📜 **Recent Queries**")
-        
-        for item in reversed(st.session_state.query_history[-3:]):
-            with st.expander(f"🕐 {item['time']} — {item['query']}..."):
-                st.text(item['response'][:300] + "..." if len(item['response']) > 300 else item['response'])
-
-# ============================================================================
-# HELPER FUNCTION: Run incremental update scripts
-# ============================================================================
-def run_fast_update(script):
-    """Run an incremental update script and stream output to Streamlit."""
-    with st.status(f"Running `{script}`...", expanded=True) as status:
-        process = subprocess.Popen(
-            [sys.executable, script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd=project_root
-        )
-
-        for line in process.stdout:
-            status.write(line.strip())
-
-        process.wait()
-
-        if process.returncode == 0:
-            status.update(label="Completed!", state="complete")
-            # Refresh stats after update
-            try:
-                st.session_state.stats = st.session_state.pipeline.get_stats()
-            except:
-                pass
-        else:
-            status.update(label="Failed", state="error")
 
 # ============================================================================
 # TAB 2: KNOWLEDGE BASE MANAGEMENT
 # ============================================================================
 with tab_manage:
-    st.markdown("### 🗄️ **Knowledge Base Management**")
-    st.markdown("Upload tickets, refresh guides, and rebuild the vector database.")
-    
-    st.markdown("---")
-    
-
-
-    # ==========================================
-    # DELETE ALL KB DATA (keeps guides)
-    # ==========================================
-    st.markdown("#### 🗑️ **Delete KB Data**")
-    st.markdown("*Deletes ticket embeddings, QA pair embeddings, BM25 index, processed tickets, and QA pairs file. **Guides are preserved**.*")
-    
-    confirm_delete = st.checkbox("I understand this action cannot be undone", key="confirm_delete_kb")
-    
-    if st.button("🗑️ Delete All KB Data", type="secondary", disabled=not confirm_delete, use_container_width=True):
-        with st.spinner("Deleting KB data..."):
-            deleted_items = []
-            
-            try:
-                from config.settings import CHROMA_DB_DIR, BM25_INDEX_PATH, PROCESSED_DIR
-                import shutil
-                
-                # 1. Clear session state and trigger garbage collection to release file locks
-                if 'pipeline' in st.session_state:
-                    # Deep cleanup of the pipeline object to close any active handles
-                    p = st.session_state.pipeline
-                    try:
-                        if hasattr(p, 'chroma') and p.chroma:
-                            # Try to access internal client to stop it
-                            if hasattr(p.chroma, '_client') and hasattr(p.chroma._client, '_system'):
-                                p.chroma._client._system.stop()
-                            p.chroma = None
-                        if hasattr(p, 'bm25_retriever'):
-                            p.bm25_retriever = None
-                    except:
-                        pass
-                    st.session_state.pipeline = None
-                    del st.session_state.pipeline
-                
-                if 'stats' in st.session_state:
-                    del st.session_state.stats
-                
-                # Multiple GC passes often help on Windows
-                import gc
-                gc.collect()
-                gc.collect() 
-                time.sleep(2) # Increased wait time
-                
-                # 2. Delete tickets + QA pairs from ChromaDB (preserve guides)
-                try:
-                    import chromadb
-                    _client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
-                    _coll = _client.get_collection("rag_v2")
-                    # Delete tickets
-                    ticket_data = _coll.get(where={"type": "ticket"}, limit=None)
-                    if ticket_data["ids"]:
-                        _coll.delete(ids=ticket_data["ids"])
-                        deleted_items.append(f"Ticket embeddings ({len(ticket_data['ids'])})")
-                    # Delete QA pairs
-                    qa_data = _coll.get(where={"type": "qa_pair"}, limit=None)
-                    if qa_data["ids"]:
-                        _coll.delete(ids=qa_data["ids"])
-                        deleted_items.append(f"QA embeddings ({len(qa_data['ids'])})")
-                except Exception as ce:
-                    # Fallback: nuke entire ChromaDB
-                    if CHROMA_DB_DIR.exists():
-                        try:
-                            shutil.rmtree(CHROMA_DB_DIR)
-                            deleted_items.append("ChromaDB (full)")
-                        except:
-                            st.warning(f"⚠️ ChromaDB files are locked. Refresh the page and try again.")
-                
-                # 3. Delete BM25 index
-                if BM25_INDEX_PATH.exists():
-                    try:
-                        BM25_INDEX_PATH.unlink()
-                        deleted_items.append("BM25 index")
-                    except Exception as be:
-                        st.warning(f"⚠️ BM25 index is locked: {be}")
-                
-                # 4. Delete processed tickets
-                processed_tickets = PROCESSED_DIR / "processed_tickets.json"
-                if processed_tickets.exists():
-                    processed_tickets.unlink()
-                    deleted_items.append("Processed tickets")
-                
-                # 5. Delete QA pairs
-                qa_pairs_file = PROCESSED_DIR / "qa_pairs.json"
-                if qa_pairs_file.exists():
-                    qa_pairs_file.unlink()
-                    deleted_items.append("QA pairs")
-                
-                if deleted_items:
-                    st.success(f"✅ Deleted: {', '.join(deleted_items)}")
-                    st.info("ℹ️ Guides were preserved. Please refresh the page.")
-                else:
-                    st.info("No KB data found to delete.")
-                    
-            except Exception as e:
-                st.error(f"❌ Error deleting KB data: {e}")
-    
-    st.markdown("---")
-    
-    # Main upload section - simplified flow
-    st.markdown("#### 📤 **Upload Zendesk Export**")
-    st.markdown("*Upload raw Zendesk export file (JSON or NDJSON format)*")
-    
-    # Show last upload timestamp
-    from config.settings import PROCESSED_TICKETS_FILE
-    if PROCESSED_TICKETS_FILE.exists():
-        import os
-        last_modified = datetime.fromtimestamp(os.path.getmtime(PROCESSED_TICKETS_FILE))
-        st.caption(f"📅 Last uploaded: {last_modified.strftime('%Y-%m-%d %H:%M')}")
-    else:
-        st.caption("📅 No tickets uploaded yet")
-    
-    uploaded = st.file_uploader("Upload JSON", type=['json'], label_visibility="collapsed")
-    
-    if uploaded:
-        try:
-            # Read and parse file
-            content = uploaded.read().decode('utf-8')
-            uploaded_tickets = []
-            
-            try:
-                # Try NDJSON format first (one JSON per line)
-                for line in content.strip().split('\n'):
-                    if line.strip():
-                        ticket = json.loads(line)
-                        uploaded_tickets.append(ticket)
-            except json.JSONDecodeError:
-                # If NDJSON fails, try regular JSON array
-                uploaded_tickets = json.loads(content)
-                if not isinstance(uploaded_tickets, list):
-                    uploaded_tickets = [uploaded_tickets]
-            
-            st.success(f"📊 Found **{len(uploaded_tickets)}** tickets in uploaded file")
-            
-            # Option to clear existing tickets
-            clear_existing = st.checkbox("🗑️ Clear existing tickets from knowledge base before checking", value=False, 
-                                        help="If checked, all existing tickets will be removed from ChromaDB before checking for duplicates. All uploaded tickets will be treated as new.")
-            
-            # Check against existing KB to find unique tickets
-            st.info("🔍 Checking against existing knowledge base...")
-            
-            try:
-                # Try to connect to existing ChromaDB to check for duplicates
-                existing_kb_ids = set()
-                db = None
-                _coll = None
-                
-                try:
-                    import chromadb as _chroma
-                    from config.settings import CHROMA_DB_DIR as _chroma_dir
-                    if _chroma_dir.exists():
-                        _client = _chroma.PersistentClient(path=str(_chroma_dir))
-                        _coll = _client.get_collection("rag_v2")
-                except Exception:
-                    # DB doesn't exist yet (e.g. after delete) -- treat as empty
-                    _coll = None
-                
-                # Clear existing tickets if requested
-                if clear_existing and _coll:
-                    with st.spinner("🗑️ Clearing existing tickets from knowledge base..."):
-                        try:
-                            ticket_data = _coll.get(where={"type": "ticket"}, limit=None)
-                            ticket_ids = ticket_data.get("ids", [])
-                            if ticket_ids:
-                                _coll.delete(ids=ticket_ids)
-                                st.success(f"✅ Cleared {len(ticket_ids)} existing tickets from knowledge base")
-                            # Also clear QA pairs since they come from tickets
-                            qa_data = _coll.get(where={"type": "qa_pair"}, limit=None)
-                            qa_ids = qa_data.get("ids", [])
-                            if qa_ids:
-                                _coll.delete(ids=qa_ids)
-                                st.success(f"✅ Cleared {len(qa_ids)} existing QA pairs from knowledge base")
-                        except Exception as e:
-                            st.warning(f"⚠️ Could not clear tickets: {e}")
-                
-                # Get existing ticket IDs from KB
-                if _coll and not clear_existing:
-                    try:
-                        existing_data = _coll.get(where={"type": "ticket"}, limit=None)
-                        for id_ in existing_data.get("ids", []):
-                            if id_.startswith("ticket_"):
-                                parts = id_.split("__idx")
-                                ticket_part = parts[0]
-                                if "_" in ticket_part:
-                                    try:
-                                        ticket_id = int(ticket_part.split("_")[-1])
-                                        existing_kb_ids.add(ticket_id)
-                                    except ValueError:
-                                        continue
-                    except Exception:
-                        pass  # Empty or missing collection
-                
-                # Debug: Show what IDs were found in KB
-                with st.expander("🔍 Debug: Duplicate Detection Info", expanded=False):
-                    st.write(f"**Existing ticket IDs in KB:** {len(existing_kb_ids)}")
-                    if existing_kb_ids:
-                        sample_ids = sorted(list(existing_kb_ids))[:10]
-                        st.write(f"**Sample IDs (first 10):** {sample_ids}")
-                    uploaded_ids = [t.get('id') for t in uploaded_tickets[:10]]
-                    st.write(f"**Uploaded ticket IDs (first 10):** {uploaded_ids}")
-                    st.write(f"**Collection used:** {'rag_v2' if _coll else 'none (empty KB)'}")
-                
-                # Find unique tickets
-                unique_tickets = []
-                duplicate_count = 0
-                for ticket in uploaded_tickets:
-                    ticket_id = ticket.get('id')
-                    if ticket_id and ticket_id not in existing_kb_ids:
-                        unique_tickets.append(ticket)
-                    else:
-                        duplicate_count += 1
-                
-                # Display results
-                col_stat1, col_stat2 = st.columns(2)
-                with col_stat1:
-                    st.metric("✅ Unique Tickets", len(unique_tickets), delta=f"{len(unique_tickets)} new")
-                with col_stat2:
-                    st.metric("⚠️ Duplicates", duplicate_count, delta=f"{duplicate_count} already in KB")
-                
-                if len(unique_tickets) == 0:
-                    st.warning("⚠️ All tickets already exist in the knowledge base. No new tickets to import.")
-                else:
-                    # Show preview
-                    with st.expander("📄 Preview First Unique Ticket", expanded=False):
-                        if unique_tickets:
-                            preview = {
-                                'id': unique_tickets[0].get('id'),
-                                'subject': unique_tickets[0].get('subject'),
-                                'status': unique_tickets[0].get('status'),
-                                'created_at': unique_tickets[0].get('created_at')
-                            }
-                            st.json(preview)
-                    
-                    # Store unique tickets in session state for processing
-                    st.session_state.unique_tickets_to_process = unique_tickets
-                    st.session_state.unique_tickets_count = len(unique_tickets)
-                    
-                    st.success(f"💾 Ready to process **{len(unique_tickets)}** unique tickets")
-                    
-                    # Process button
-                    st.markdown("---")
-                    if st.button("🚀 Process & Update Knowledge Base", type="primary", use_container_width=True):
-                        unique_tickets = st.session_state.get("unique_tickets_to_process", [])
-                        if not unique_tickets:
-                            st.error("No unique tickets to process. Please upload a file first.")
-                            st.stop()
-                        
-                        with st.status("Processing and updating knowledge base...", expanded=True) as status:
-                            # Step 1: Process tickets (clean, extract conversation)
-                            status.write(f"📝 Step 1/3: Processing {len(unique_tickets)} unique tickets...")
-                            try:
-                                import tempfile
-                                import os
-                                
-                                # Create temporary file with only unique tickets
-                                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp_file:
-                                    json.dump(unique_tickets, tmp_file, ensure_ascii=False, indent=2)
-                                    tmp_path = Path(tmp_file.name)
-                                
-                                # Set environment variable for the script to use
-                                env = os.environ.copy()
-                                env['ZENDESK_EXPORT_FILE'] = str(tmp_path)
-                                
-                                # Use Popen for real-time streaming
-                                process = subprocess.Popen(
-                                    [sys.executable, "scripts/process_tickets_only.py"],
-                                    cwd=project_root,
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT,
-                                    text=True,
-                                    bufsize=1,  # Line buffered
-                                    universal_newlines=True,
-                                    env=env
-                                )
-                                
-                                # Stream output in real-time
-                                for line in iter(process.stdout.readline, ''):
-                                    if line:
-                                        line = line.strip()
-                                        if line:
-                                            status.write(line)
-                                
-                                process.wait()
-                                
-                                # Clean up temp file
-                                if tmp_path.exists():
-                                    tmp_path.unlink()
-                                
-                                if process.returncode != 0:
-                                    status.update(label="❌ Processing failed", state="error")
-                                    st.error("Processing failed. Check logs above.")
-                                    st.stop()
-                                
-                            except Exception as e:
-                                status.write(f"❌ Error processing: {e}")
-                                st.error(f"Processing failed: {e}")
-                                import traceback
-                                st.code(traceback.format_exc())
-                                st.stop()
-                            
-                            # Step 2: Generate embeddings and update KB
-                            status.write("")
-                            status.write("🔍 Step 2/3: Generating ticket embeddings...")
-                            try:
-                                process = subprocess.Popen(
-                                    [sys.executable, "scripts/update_tickets_only.py"],
-                                    cwd=project_root,
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT,
-                                    text=True,
-                                    bufsize=1,
-                                    universal_newlines=True
-                                )
-                                
-                                for line in iter(process.stdout.readline, ''):
-                                    if line:
-                                        line = line.strip()
-                                        if line:
-                                            status.write(line)
-                                
-                                process.wait()
-                                
-                                if process.returncode != 0:
-                                    status.update(label="❌ Ticket embedding failed", state="error")
-                                    st.error("Failed to embed tickets. Check logs above.")
-                                    st.stop()
-                                
-                            except Exception as e:
-                                status.write(f"❌ Error: {e}")
-                                st.error(f"Ticket embedding failed: {e}")
-                                import traceback
-                                st.code(traceback.format_exc())
-                                st.stop()
-                            
-                            # Step 3: Extract QA pairs and embed them
-                            status.write("")
-                            status.write("💬 Step 3/3: Extracting QA pairs and embedding...")
-                            try:
-                                process = subprocess.Popen(
-                                    [sys.executable, "scripts/update_qa_only.py"],
-                                    cwd=project_root,
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT,
-                                    text=True,
-                                    bufsize=1,
-                                    universal_newlines=True
-                                )
-                                
-                                for line in iter(process.stdout.readline, ''):
-                                    if line:
-                                        line = line.strip()
-                                        if line:
-                                            status.write(line)
-                                
-                                process.wait()
-                                
-                                if process.returncode != 0:
-                                    status.write("⚠️ QA extraction had issues, but tickets are saved.")
-                                
-                            except Exception as e:
-                                status.write(f"⚠️ QA extraction error: {e} (tickets are still saved)")
-                            
-                            # All done
-                            status.update(label="✅ Complete! Tickets + QA pairs embedded", state="complete")
-                            try:
-                                st.session_state.stats = st.session_state.pipeline.get_stats()
-                            except:
-                                pass
-                            unique_count = st.session_state.get("unique_tickets_count", len(unique_tickets))
-                            st.success(f"🎉 Successfully imported **{unique_count}** tickets + QA pairs!")
-                            st.balloons()
-                            # Clear session state
-                            if "unique_tickets_to_process" in st.session_state:
-                                del st.session_state.unique_tickets_to_process
-                            time.sleep(1)
-                            st.rerun()
-                    
-            except Exception as e:
-                st.error(f"❌ Error checking knowledge base: {e}")
-                import traceback
-                with st.expander("🔍 Error Details", expanded=False):
-                    st.code(traceback.format_exc())
-                        
-        except json.JSONDecodeError as e:
-            st.error(f"❌ Invalid JSON format: {e}")
-        except Exception as e:
-            st.error(f"❌ Error: {e}")
-            import traceback
-            with st.expander("🔍 Error Details", expanded=False):
-                st.code(traceback.format_exc())
-    
-    
-    st.markdown("---")
-    
-    # Guides Section
-    st.markdown("#### 🌐 **Guides**")
-    
-    # Check if processed guide chunks exist
-    from config.settings import GUIDES_CHUNKS_FILE
-    guides_chunks_exist = GUIDES_CHUNKS_FILE.exists()
-    
-    if guides_chunks_exist:
-        import os as _os
-        last_modified = datetime.fromtimestamp(_os.path.getmtime(GUIDES_CHUNKS_FILE))
-        st.caption(f"📅 Last refreshed: {last_modified.strftime('%Y-%m-%d %H:%M')}")
-        
-        # Primary action: Embed existing guides
-        st.markdown("*Processed guide chunks found. Embed them into the knowledge base.*")
-        if st.button("� Embed Existing Guides", use_container_width=True, type="primary"):
-            with st.status("Creating guide embeddings...", expanded=True) as status:
-                try:
-                    process = subprocess.Popen(
-                        [sys.executable, "scripts/update_guides_incremental.py"],
-                        cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1,
-                        universal_newlines=True
-                    )
-                    
-                    for line in iter(process.stdout.readline, ''):
-                        if line:
-                            line = line.strip()
-                            if line:
-                                status.write(line)
-                    
-                    process.wait()
-                    
-                    if process.returncode == 0:
-                        status.update(label="✅ Guide embeddings created!", state="complete")
-                        try:
-                            st.session_state.stats = st.session_state.pipeline.get_stats()
-                        except:
-                            pass
-                        st.balloons()
-                    else:
-                        status.update(label="❌ Process failed", state="error")
-                        st.error("Failed to embed guides")
-                        
-                except Exception as e:
-                    status.update(label="❌ Error", state="error")
-                    st.error(f"Error: {e}")
-        
-        # Secondary: Re-scrape
-        with st.expander("🔄 Re-scrape guides from website", expanded=False):
-            st.markdown("*Scrape latest guides, chunk, and update embeddings*")
-            if st.button("🔄 Refresh Guides", use_container_width=True):
-                with st.status("Processing guides...", expanded=True) as status:
-                    try:
-                        status.write("📥 Step 1/3: Scraping guides from website...")
-                        process = subprocess.Popen(
-                            [sys.executable, "-m", "src.phase3.scrape_guides_fast"],
-                            cwd=project_root,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            bufsize=1,
-                            universal_newlines=True
-                        )
-                        
-                        for line in iter(process.stdout.readline, ''):
-                            if line:
-                                line = line.strip()
-                                if line:
-                                    status.write(line)
-                        
-                        process.wait()
-                        
-                        if process.returncode != 0:
-                            status.update(label="❌ Scraping failed", state="error")
-                            st.stop()
-                        
-                        status.write("✂️  Step 2/3: Chunking guides...")
-                        chunk_process = subprocess.run(
-                            [sys.executable, "-m", "src.phase1.semantic_chunker"],
-                            cwd=project_root,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            timeout=120
-                        )
-                        
-                        for line in chunk_process.stdout.split('\n'):
-                            if line.strip():
-                                status.write(line.strip())
-                        
-                        if chunk_process.returncode != 0:
-                            status.update(label="❌ Chunking failed", state="error")
-                            st.stop()
-                        
-                        status.write("� Step 3/3: Updating guide embeddings...")
-                        update_process = subprocess.run(
-                            [sys.executable, "scripts/update_guides_incremental.py"],
-                            cwd=project_root,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            timeout=300
-                        )
-                        
-                        for line in update_process.stdout.split('\n'):
-                            if line.strip():
-                                status.write(line.strip())
-                        
-                        if update_process.returncode == 0:
-                            status.update(label="✅ Guides refreshed!", state="complete")
-                            try:
-                                st.session_state.stats = st.session_state.pipeline.get_stats()
-                            except:
-                                pass
-                            st.balloons()
-                        else:
-                            status.update(label="❌ Update failed", state="error")
-                            st.error("Failed to update guide embeddings")
-                            st.code(update_process.stdout)
-                            
-                    except Exception as e:
-                        status.update(label="❌ Error", state="error")
-                        st.error(f"Error: {e}")
-                        import traceback
-                        st.code(traceback.format_exc())
-    else:
-        st.caption("📅 No processed guides found")
-        st.markdown("*Scrape guides from website, chunk, and create embeddings*")
-        if st.button("� Scrape & Process Guides", use_container_width=True, type="primary"):
-            with st.status("Processing guides...", expanded=True) as status:
-                try:
-                    status.write("📥 Step 1/3: Scraping guides from website...")
-                    process = subprocess.Popen(
-                        [sys.executable, "-m", "src.phase3.scrape_guides_fast"],
-                        cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1,
-                        universal_newlines=True
-                    )
-                    
-                    for line in iter(process.stdout.readline, ''):
-                        if line:
-                            line = line.strip()
-                            if line:
-                                status.write(line)
-                    
-                    process.wait()
-                    
-                    if process.returncode != 0:
-                        status.update(label="❌ Scraping failed", state="error")
-                        st.stop()
-                    
-                    status.write("✂️  Step 2/3: Chunking guides...")
-                    chunk_process = subprocess.run(
-                        [sys.executable, "-m", "src.phase1.semantic_chunker"],
-                        cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=120
-                    )
-                    
-                    for line in chunk_process.stdout.split('\n'):
-                        if line.strip():
-                            status.write(line.strip())
-                    
-                    if chunk_process.returncode != 0:
-                        status.update(label="❌ Chunking failed", state="error")
-                        st.stop()
-                    
-                    status.write("🔧 Step 3/3: Creating guide embeddings...")
-                    update_process = subprocess.run(
-                        [sys.executable, "scripts/update_guides_incremental.py"],
-                        cwd=project_root,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=300
-                    )
-                    
-                    for line in update_process.stdout.split('\n'):
-                        if line.strip():
-                            status.write(line.strip())
-                    
-                    if update_process.returncode == 0:
-                        status.update(label="✅ Guides processed!", state="complete")
-                        try:
-                            st.session_state.stats = st.session_state.pipeline.get_stats()
-                        except:
-                            pass
-                        st.balloons()
-                    else:
-                        status.update(label="❌ Update failed", state="error")
-                        st.error("Failed to create guide embeddings")
-                        st.code(update_process.stdout)
-                        
-                except Exception as e:
-                    status.update(label="❌ Error", state="error")
-                    st.error(f"Error: {e}")
-                    import traceback
-                    st.code(traceback.format_exc()) 
-    
-    st.markdown("---")
-    
-    # Extract QA Pairs Section
-    st.markdown("#### 💬 **Extract QA Pairs**")
-    st.markdown("*Extract question-answer pairs from processed tickets*")
-    
-    # Show QA pairs count if exists
-    from config.settings import PROCESSED_DIR
-    qa_pairs_file = PROCESSED_DIR / "qa_pairs.json"
-    if qa_pairs_file.exists():
-        try:
-            with open(qa_pairs_file, 'r', encoding='utf-8') as f:
-                qa_count = len(json.load(f))
-            st.caption(f"📊 Current QA pairs: {qa_count:,}")
-        except:
-            pass
-    
-    if st.button("💬 Extract QA Pairs + Embed", use_container_width=True):
-        with st.status("Extracting QA pairs and creating embeddings...", expanded=True) as status:
-            try:
-                # Use Popen for streaming output
-                process = subprocess.Popen(
-                    [sys.executable, "scripts/update_qa_only.py"],
-                    cwd=project_root,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    universal_newlines=True
-                )
-                
-                # Stream output in real-time
-                for line in iter(process.stdout.readline, ''):
-                    if line:
-                        line = line.strip()
-                        if line:
-                            status.write(line)
-                
-                process.wait()
-                
-                if process.returncode == 0:
-                    status.update(label="✅ QA pairs extracted and embedded!", state="complete")
-                    st.success("Successfully extracted and embedded QA pairs!")
-                    # Refresh stats
-                    try:
-                        st.session_state.stats = st.session_state.pipeline.get_stats()
-                    except:
-                        pass
-                    st.balloons()
-                else:
-                    status.update(label="❌ Process failed", state="error")
-                    st.error("Failed to extract/embed QA pairs")
-                    
-            except Exception as e:
-                status.update(label="❌ Error", state="error")
-                st.error(f"Error: {e}")
-    
-    
-    st.markdown("---")
-    
-    # Database Info
-    st.markdown("#### 📊 **Database Info**")
-    
-    info_col1, info_col2 = st.columns(2)
-    with info_col1:
-        st.markdown(f"""
-        <div class="stat-box">
-            <div class="stat-value">{st.session_state.stats['tickets']}</div>
-            <div class="stat-label">Tickets</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with info_col2:
-        st.markdown(f"""
-        <div class="stat-box">
-            <div class="stat-value">{st.session_state.stats['guides']}</div>
-            <div class="stat-label">Guide Chunks</div>
-        </div>
-        """, unsafe_allow_html=True)
+    render_manage_tab(
+        st=st,
+        project_root=project_root,
+        sys=sys,
+        subprocess=subprocess,
+        Path=Path,
+        json=json,
+        time=time,
+        datetime=datetime,
+        reset_pipeline=_reset_pipeline,
+    )
 
 # Footer
 st.markdown("---")

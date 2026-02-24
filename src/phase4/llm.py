@@ -5,6 +5,7 @@ Supports Groq, Gemini, and Ollama.
 
 import logging
 import requests
+import time
 from typing import List, Dict, Any, Optional
 
 from langchain_core.language_models.llms import LLM
@@ -87,7 +88,12 @@ class GroqLLM(LLM):
                     raise RuntimeError(str(err.get("message", "Groq returned error payload")))
                 raise RuntimeError(str(err))
 
-            return data["choices"][0]["message"]["content"]
+            result_text = data["choices"][0]["message"]["content"]
+            # Some Groq planner failures are returned as plain text content
+            # instead of HTTP errors. Treat those as retryable failures.
+            if self._should_fallback(result_text):
+                raise RuntimeError(result_text)
+            return result_text
 
         try:
             return _invoke(payload)
@@ -105,6 +111,15 @@ class GroqLLM(LLM):
                     return _invoke(retry_payload)
                 except Exception as retry_e:
                     logger.error(f"Groq API retry error: {retry_e}")
+                    raise
+            # Even on the fallback model, this planner error can be transient.
+            # Retry once with a short delay before surfacing the error.
+            if self._should_fallback(err_text):
+                try:
+                    time.sleep(1)
+                    return _invoke(payload)
+                except Exception as retry_same_model_e:
+                    logger.error(f"Groq same-model retry error: {retry_same_model_e}")
                     raise
             logger.error(f"Groq API error: {e}")
             raise
