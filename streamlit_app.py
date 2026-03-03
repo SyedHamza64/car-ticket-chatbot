@@ -725,13 +725,104 @@ with loading_placeholder.container():
     st.markdown(
         """
         <style>
-        @keyframes load-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        @keyframes loader-orbital {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        @keyframes loader-inner {
+            0%, 100% { transform: scale(0.8); opacity: 0.6; }
+            50% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes loader-dots {
+            0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes loader-road {
+            0% { width: 0%; }
+            100% { width: 100%; }
+        }
+        .load-wrap {
+            text-align: center;
+            padding: 4rem 2rem;
+        }
+        .load-orbital {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
+            position: relative;
+        }
+        .load-ring {
+            position: absolute;
+            inset: 0;
+            border: 2px solid transparent;
+            border-top-color: #6366f1;
+            border-right-color: #8b5cf6;
+            border-radius: 50%;
+            animation: loader-orbital 1s linear infinite;
+        }
+        .load-ring:nth-child(2) {
+            inset: 8px;
+            border-top-color: #8b5cf6;
+            border-right-color: #6366f1;
+            animation-duration: 1.2s;
+            animation-direction: reverse;
+        }
+        .load-ring:nth-child(3) {
+            inset: 16px;
+            border-top-color: #a78bfa;
+            animation-duration: 0.8s;
+        }
+        .load-center {
+            position: absolute;
+            inset: 28px;
+            background: radial-gradient(circle, rgba(99,102,241,0.3) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: loader-inner 1.5s ease-in-out infinite;
+        }
+        .load-dots {
+            display: flex;
+            justify-content: center;
+            gap: 6px;
+            margin-bottom: 1rem;
+        }
+        .load-dots span {
+            width: 8px;
+            height: 8px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            border-radius: 50%;
+            animation: loader-dots 1.4s ease-in-out infinite both;
+        }
+        .load-dots span:nth-child(1) { animation-delay: 0s; }
+        .load-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .load-dots span:nth-child(3) { animation-delay: 0.4s; }
+        .load-road {
+            height: 4px;
+            background: rgba(99,102,241,0.2);
+            border-radius: 4px;
+            max-width: 200px;
+            margin: 0 auto 1rem;
+            overflow: hidden;
+        }
+        .load-road-inner {
+            height: 100%;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6);
+            border-radius: 4px;
+            animation: loader-road 2s ease-in-out infinite;
+        }
+        .load-text { font-size: 1.1rem; color: var(--text-secondary); margin-bottom: 0.25rem; font-weight: 500; }
+        .load-sub { font-size: 0.9rem; color: var(--text-muted); }
         </style>
-        <div style='text-align:center; padding:4rem 2rem;'>
-            <p style='font-size:1.2rem; color:var(--text-secondary); margin-bottom:1rem;'>
-                <span style='animation:load-pulse 1.2s ease-in-out infinite;'>🔄</span> Loading your assistant...
-            </p>
-            <p style='font-size:0.9rem; color:var(--text-muted);'>Initializing AI pipeline • Please wait</p>
+        <div class="load-wrap">
+            <div class="load-orbital">
+                <div class="load-ring"></div>
+                <div class="load-ring"></div>
+                <div class="load-ring"></div>
+                <div class="load-center"></div>
+            </div>
+            <div class="load-dots"><span></span><span></span><span></span></div>
+            <div class="load-road"><div class="load-road-inner"></div></div>
+            <p class="load-text">Loading your assistant...</p>
+            <p class="load-sub">Initializing AI pipeline · Please wait</p>
         </div>
         """,
         unsafe_allow_html=True

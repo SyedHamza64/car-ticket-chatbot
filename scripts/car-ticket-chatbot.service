@@ -1,0 +1,19 @@
+# systemd unit for LaCuraDellAuto Streamlit app (auto-restart on crash)
+# Install: sudo cp scripts/car-ticket-chatbot.service /etc/systemd/system/
+#         sudo systemctl daemon-reload && sudo systemctl enable --now car-ticket-chatbot
+# Logs:   sudo journalctl -u car-ticket-chatbot -f
+
+[Unit]
+Description=LaCuraDellAuto AI Streamlit App
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/projects/car-ticket-chatbot
+ExecStart=/root/projects/car-ticket-chatbot/.venv/bin/python -m streamlit run streamlit_app.py --server.address=0.0.0.0 --server.port=8501
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
